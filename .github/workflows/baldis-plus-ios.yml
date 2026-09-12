@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v7
+name: Baldi's Basics Plus iOS - FAST v8
 
 on:
   workflow_dispatch:
@@ -631,30 +631,35 @@ jobs:
 
           test -f /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
 
-      - name: Activate Unity Personal automatically
+      - name: Activate Unity Personal
+        id: activate_unity
+        uses: RageAgainstThePixel/activate-unity-license@v2
+        with:
+          license: Personal
+          username: ${{ secrets.UNITY_USERNAME }}
+          password: ${{ secrets.UNITY_PASSWORD }}
+          license-version: 6.x
+
+      - name: Show Unity license status
+        if: always()
         env:
           UNITY_HUB_PATH: /usr/local/bin/unity-hub
         shell: bash
         run: |
-          set -euo pipefail
-
-          echo "===== UNITY CLI ====="
-          unity-cli --version || true
-
-          echo "===== UNITY LICENSING CLIENT ====="
-          unity-cli license-version || true
-
-          echo "===== ACTIVATE UNITY PERSONAL ====="
-          unity-cli activate-license \
-            --license personal \
-            --email "$UNITY_EMAIL" \
-            --password "$UNITY_PASSWORD" \
-            --verbose
-
+          set +e
           echo "===== LICENSE CONTEXT ====="
           unity-cli license-context || true
 
-          echo "UNITY PERSONAL ACTIVATION: SUCCESS"
+          echo "===== LICENSING CLIENT LOG PATH ====="
+          unity-cli licensing-client-logs || true
+
+          echo "===== LICENSING AUDIT LOG PATH ====="
+          unity-cli licensing-audit-logs || true
+
+          echo "===== UNITY LICENSE FILES ====="
+          find "$HOME" /root /var/lib/unity3d /usr/share/unity3d \
+            -type f \( -name "Unity_lic.ulf" -o -name "*.ulf" \) \
+            -print 2>/dev/null | head -50 || true
 
       - name: Install exact Unity Editor + iOS module
         id: unity_setup
@@ -749,7 +754,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v7"
+            echo "BALDI PLUS iOS FAST v8"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -777,7 +782,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v7
+          name: Baldis-Plus-iOS-Diagnostics-v8
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -798,7 +803,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v7
+          name: Baldis-Plus-iOS-Xcode-STAGED-v8
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -809,7 +814,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v7 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v8 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -822,7 +827,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v7
+          name: Baldis-Plus-iOS-Xcode-STAGED-v8
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -916,17 +921,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v7-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v8-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v7-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v8-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v7-Signulous
+          name: Baldis-Plus-iOS-v8-Signulous
           path: |
-            output/Baldis-Plus-iOS-v7-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v8-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
