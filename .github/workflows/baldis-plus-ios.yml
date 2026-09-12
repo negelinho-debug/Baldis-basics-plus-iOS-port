@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v8
+name: Baldi's Basics Plus iOS - FAST v8 CLEAN
 
 on:
   workflow_dispatch:
@@ -12,10 +12,6 @@ jobs:
     name: 1. Recover APK + Build iOS Xcode
     runs-on: ubuntu-latest
     timeout-minutes: 180
-
-    env:
-      UNITY_EMAIL: ${{ secrets.UNITY_USERNAME }}
-      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -501,138 +497,17 @@ jobs:
             echo "CS_FILES=$(find "$PROJECT/Assets" -type f -name '*.cs' | wc -l)"
           } | tee output/recovery-summary.txt
 
-      - name: Check Unity login secrets
-        shell: bash
-        run: |
-          set -e
-
-          if [ -z "${UNITY_EMAIL:-}" ]; then
-            echo "ERROR: UNITY_USERNAME secret is missing"
-            exit 1
-          fi
-
-          if [ -z "${UNITY_PASSWORD:-}" ]; then
-            echo "ERROR: UNITY_PASSWORD secret is missing"
-            exit 1
-          fi
-
-          echo "UNITY LOGIN SECRETS: OK"
-
-      - name: Setup Node 22 for Unity CLI
-        uses: actions/setup-node@v4
+      - name: Install exact Unity 2021.2.0b11 + iOS support
+        id: unity_setup
+        uses: RageAgainstThePixel/unity-setup@v2
         with:
-          node-version: "22"
-
-      - name: Install Unity CLI + Unity Hub
-        shell: bash
-        run: |
-          set -e
-
-          npm install -g @rage-against-the-pixel/unity-cli
-
-          sudo apt-get update -o Acquire::Retries=4 || true
-          sudo apt-get install -y \
-            ca-certificates \
-            curl \
-            gnupg \
-            xvfb \
-            libgbm1 \
-            libgtk-3-0 \
-            libnss3
-
-          sudo install -d -m 0755 /etc/apt/keyrings
-
-          curl -fsSL https://hub.unity3d.com/linux/keys/public \
-            | sudo gpg --dearmor \
-              -o /etc/apt/keyrings/unityhub.gpg
-
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/unityhub.gpg] https://hub.unity3d.com/linux/repos/deb stable main" \
-            | sudo tee /etc/apt/sources.list.d/unityhub.list >/dev/null
-
-          sudo apt-get update -o Acquire::Retries=4 || true
-          sudo apt-get install -y unityhub
-
-          HUB_CMD="$(command -v unityhub || true)"
-
-          if [ -z "$HUB_CMD" ]; then
-            echo "ERROR: unityhub command not found"
-            exit 1
-          fi
-
-          sudo mkdir -p /opt/unityhub
-
-          sudo tee /opt/unityhub/unityhub >/dev/null <<EOF
-          #!/bin/bash
-          exec xvfb-run -a "$HUB_CMD" --no-sandbox --headless "\$@"
-          EOF
-
-          sudo chmod +x /opt/unityhub/unityhub
-
-          # unity-cli internally spawns a binary literally named "unity-hub".
-          # Ubuntu's package installs "unityhub", so create both names.
-          sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unity-hub
-          sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unityhub-ci
-
-          echo "UNITY_HUB_PATH=/usr/local/bin/unity-hub" >> "$GITHUB_ENV"
-          echo "/usr/local/bin" >> "$GITHUB_PATH"
-          echo "/opt/unityhub" >> "$GITHUB_PATH"
-
-          echo "===== UNITY HUB COMMANDS ====="
-          command -v unityhub || true
-          command -v unity-hub
-          ls -l /usr/local/bin/unity-hub
-
-          UNITY_HUB_PATH=/usr/local/bin/unity-hub unity-cli hub-version || true
-
-      - name: Prepare Unity Licensing Client
-        env:
-          UNITY_HUB_PATH: /opt/unityhub/unityhub
-        shell: bash
-        run: |
-          set -e
-
-          find_client() {
-            find /usr /opt "$HOME" \
-              -type f \
-              -name "Unity.Licensing.Client" \
-              2>/dev/null \
-              | head -1
-          }
-
-          CLIENT="$(find_client || true)"
-
-          if [ -z "$CLIENT" ]; then
-            echo "Licensing client not found in Hub package."
-            echo "Installing a small Unity editor copy so the licensing client exists."
-
-            UNITY_HUB_PATH=/usr/local/bin/unity-hub \
-            unity-cli setup-unity \
-              --unity-project none \
-              --unity-version 2018.2.0f2 \
-              --changeset 787658998520 \
-              --build-targets iOS \
-              --modules ios \
-              --json
-
-            CLIENT="$(find_client || true)"
-          fi
-
-          if [ -z "$CLIENT" ]; then
-            echo "ERROR: Unity.Licensing.Client not found."
-            exit 1
-          fi
-
-          CLIENT_DIR="$(dirname "$CLIENT")"
-
-          sudo rm -rf /opt/unityhub/UnityLicensingClient
-          sudo mkdir -p /opt/unityhub/UnityLicensingClient
-          sudo cp -a "$CLIENT_DIR"/. /opt/unityhub/UnityLicensingClient/
-          sudo chmod +x /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client || true
-
-          test -f /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
+          unity-version: "2021.2.0b11 (0bffbba03cb9)"
+          version-file: ${{ steps.prepare.outputs.project }}/ProjectSettings/ProjectVersion.txt
+          build-targets: iOS
+          cache-installation: false
 
       - name: Activate Unity Personal
-        id: activate_unity
+        id: unity_license
         uses: RageAgainstThePixel/activate-unity-license@v2
         with:
           license: Personal
@@ -640,87 +515,15 @@ jobs:
           password: ${{ secrets.UNITY_PASSWORD }}
           license-version: 6.x
 
-      - name: Show Unity license status
-        if: always()
-        env:
-          UNITY_HUB_PATH: /usr/local/bin/unity-hub
-        shell: bash
-        run: |
-          set +e
-          echo "===== LICENSE CONTEXT ====="
-          unity-cli license-context || true
-
-          echo "===== LICENSING CLIENT LOG PATH ====="
-          unity-cli licensing-client-logs || true
-
-          echo "===== LICENSING AUDIT LOG PATH ====="
-          unity-cli licensing-audit-logs || true
-
-          echo "===== UNITY LICENSE FILES ====="
-          find "$HOME" /root /var/lib/unity3d /usr/share/unity3d \
-            -type f \( -name "Unity_lic.ulf" -o -name "*.ulf" \) \
-            -print 2>/dev/null | head -50 || true
-
-      - name: Install exact Unity Editor + iOS module
-        id: unity_setup
-        env:
-          UNITY_HUB_PATH: /usr/local/bin/unity-hub
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.prepare.outputs.project }}"
-          VERSION="${{ steps.prepare.outputs.unity_version }}"
-
-          echo "PROJECT=$PROJECT"
-          echo "UNITY_VERSION=$VERSION"
-
-          # v3 failed before Unity even started because GameCI tried to pull
-          # a Docker image that does not exist for this beta:
-          # unityci/editor:ubuntu-2021.2.0b11-ios-3
-          #
-          # v4 bypasses Docker/GameCI completely and asks Unity Hub to install
-          # the exact editor version recovered from the APK.
-
-          unity-cli setup-unity \
-            --unity-project "$PROJECT" \
-            --unity-version "$VERSION" \
-            --changeset 0bffbba03cb9 \
-            --build-targets iOS \
-            --modules ios \
-            --json \
-            | tee output/unity-setup.json
-
-          echo "===== INSTALLED UNITY EDITORS ====="
-          unity-cli hub editors --installed \
-            | tee output/unity-editors.txt || true
-
-      - name: Build Unity iOS Xcode project directly
+      - name: Build Unity iOS Xcode project
         id: unity_build
         continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-
-          PROJECT="${{ steps.prepare.outputs.project }}"
-
-          echo "===== DIRECT UNITY BUILD ====="
-          echo "No Docker. No GameCI editor image."
-
-          unity-cli run \
-            --unity-project "$PROJECT" \
-            --log-name "baldi-ios-build" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -buildTarget iOS \
-            -executeMethod BaldiIOSBuild.PerformBuild \
-            -logFile - \
-            2>&1 | tee output/unity-build.log
-
-          RC=${PIPESTATUS[0]}
-          echo "UNITY_EXIT=$RC" | tee output/unity-exit.txt
-          exit "$RC"
+        uses: RageAgainstThePixel/unity-action@v3
+        with:
+          log-name: baldi-ios-build
+          build-target: iOS
+          project-path: ${{ steps.prepare.outputs.project }}
+          args: -quit -nographics -batchmode -executeMethod BaldiIOSBuild.PerformBuild
 
       - name: Locate Unity iOS Xcode output
         id: xcode
@@ -754,22 +557,22 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v8"
+            echo "BALDI PLUS iOS FAST v8 CLEAN"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
             echo
             cat output/recovery-summary.txt 2>/dev/null
             echo
+            echo "UNITY_SETUP_OUTCOME=${{ steps.unity_setup.outcome }}"
+            echo "UNITY_LICENSE_OUTCOME=${{ steps.unity_license.outcome }}"
             echo "UNITY_BUILD_OUTCOME=${{ steps.unity_build.outcome }}"
+            echo "UNITY_EDITOR_PATH=${{ steps.unity_setup.outputs.unity-editor-path }}"
             echo "XCODE_READY=${{ steps.xcode.outputs.ready }}"
           } > output/summary.txt
 
           tail -400 output/assetripper.log \
             > output/assetripper-tail.txt 2>/dev/null || true
-
-          echo "===== UNITY CLI EDITOR LOGS =====" > output/unity-editor-logs.txt
-          unity-cli editor-logs >> output/unity-editor-logs.txt 2>&1 || true
 
           PROJECT="$(cat output/project-path.txt 2>/dev/null || true)"
 
@@ -936,4 +739,3 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
-д
