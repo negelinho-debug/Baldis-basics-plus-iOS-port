@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v1
+name: Baldi's Basics Plus iOS - FAST v2
 
 on:
   workflow_dispatch:
@@ -93,31 +93,79 @@ jobs:
           find work/android/lib -maxdepth 2 -type f -name '*.so' -print 2>/dev/null \
             | tee output/native-libs.txt || true
 
-          GGM="$(find work/android -type f -name globalgamemanagers -print | head -1 || true)"
+          # Baldi Mobile 0.14Pre stores the Unity player data in
+          # assets/bin/Data and may NOT contain globalgamemanagers.
+          DATA_DIR=""
 
-          if [ -z "$GGM" ]; then
-            echo "ERROR: globalgamemanagers not found."
-            echo "This APK does not look like a normal Unity Android build."
-            find work/android -maxdepth 4 -type f | head -300
+          GGM="$(find work/android -type f -name globalgamemanagers -print | head -1 || true)"
+          if [ -n "$GGM" ]; then
+            DATA_DIR="$(dirname "$GGM")"
+          fi
+
+          if [ -z "$DATA_DIR" ] && [ -d "work/android/assets/bin/Data" ]; then
+            DATA_DIR="work/android/assets/bin/Data"
+          fi
+
+          if [ -z "$DATA_DIR" ]; then
+            DATA_UNITY3D="$(find work/android -type f -name 'data.unity3d' -print | head -1 || true)"
+            if [ -n "$DATA_UNITY3D" ]; then
+              DATA_DIR="$(dirname "$DATA_UNITY3D")"
+            fi
+          fi
+
+          if [ -z "$DATA_DIR" ]; then
+            BOOT="$(find work/android -type f -name boot.config -print | head -1 || true)"
+            if [ -n "$BOOT" ]; then
+              DATA_DIR="$(dirname "$BOOT")"
+            fi
+          fi
+
+          if [ -z "$DATA_DIR" ] || [ ! -d "$DATA_DIR" ]; then
+            echo "ERROR: Unity Data directory not found."
+            find work/android -maxdepth 5 -type f | head -400
             exit 1
           fi
 
-          DATA_DIR="$(dirname "$GGM")"
           echo "$DATA_DIR" > output/unity-data-dir.txt
 
-          VERSION="$(
-            strings "$GGM" 2>/dev/null \
-              | grep -Eo '20[0-9]{2}\.[0-9]+\.[0-9]+[abfp][0-9]+' \
-              | head -1 || true
-          )"
+          echo "===== UNITY DATA DIR ====="
+          echo "$DATA_DIR"
+          find "$DATA_DIR" -maxdepth 2 -type f -print | head -250
 
-          if [ -z "$VERSION" ]; then
-            VERSION="$(
-              find "$DATA_DIR" -maxdepth 1 -type f -size -20M -print0 \
-                | xargs -0 strings 2>/dev/null \
+          VERSION=""
+
+          # Try all small Unity data files instead of requiring globalgamemanagers.
+          while IFS= read -r f; do
+            CANDIDATE="$(
+              strings "$f" 2>/dev/null \
                 | grep -Eo '20[0-9]{2}\.[0-9]+\.[0-9]+[abfp][0-9]+' \
                 | head -1 || true
             )"
+            if [ -n "$CANDIDATE" ]; then
+              VERSION="$CANDIDATE"
+              echo "Unity version found in: $f"
+              break
+            fi
+          done < <(
+            find "$DATA_DIR" -maxdepth 2 -type f -size -64M -print
+          )
+
+          if [ -z "$VERSION" ]; then
+            # Unity native libraries often contain the engine version too.
+            while IFS= read -r f; do
+              CANDIDATE="$(
+                strings "$f" 2>/dev/null \
+                  | grep -Eo '20[0-9]{2}\.[0-9]+\.[0-9]+[abfp][0-9]+' \
+                  | head -1 || true
+              )"
+              if [ -n "$CANDIDATE" ]; then
+                VERSION="$CANDIDATE"
+                echo "Unity version found in native library: $f"
+                break
+              fi
+            done < <(
+              find work/android/lib -type f \( -name 'libunity.so' -o -name 'libmain.so' \) -print 2>/dev/null
+            )
           fi
 
           if [ -z "$VERSION" ]; then
@@ -126,10 +174,11 @@ jobs:
 
           MANAGED="$(find "$DATA_DIR" -type f -path '*/Managed/Assembly-CSharp.dll' -print | head -1 || true)"
           META="$(find work/android -type f -name global-metadata.dat -print | head -1 || true)"
+          IL2CPP="$(find work/android/lib -type f -name 'libil2cpp.so' -print | head -1 || true)"
 
           if [ -n "$MANAGED" ]; then
             BACKEND="MONO"
-          elif [ -n "$META" ]; then
+          elif [ -n "$META" ] || [ -n "$IL2CPP" ]; then
             BACKEND="IL2CPP"
           else
             BACKEND="UNKNOWN"
@@ -139,6 +188,10 @@ jobs:
             echo "UNITY_VERSION=$VERSION"
             echo "SCRIPT_BACKEND=$BACKEND"
             echo "DATA_DIR=$DATA_DIR"
+            echo "GLOBALGAMEMANAGERS=${GGM:-NONE}"
+            echo "MANAGED=${MANAGED:-NONE}"
+            echo "GLOBAL_METADATA=${META:-NONE}"
+            echo "IL2CPP_LIB=${IL2CPP:-NONE}"
           } | tee output/inspect.txt
 
           echo "unity_version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -502,7 +555,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v1"
+            echo "BALDI PLUS iOS FAST v2"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -527,7 +580,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v1
+          name: Baldis-Plus-iOS-Diagnostics-v2
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -548,7 +601,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v1
+          name: Baldis-Plus-iOS-Xcode-STAGED-v2
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -559,7 +612,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v1 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v2 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -572,7 +625,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v1
+          name: Baldis-Plus-iOS-Xcode-STAGED-v2
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -666,17 +719,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v1-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v2-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v1-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v2-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v1-Signulous
+          name: Baldis-Plus-iOS-v2-Signulous
           path: |
-            output/Baldis-Plus-iOS-v1-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v2-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
