@@ -1,10 +1,7 @@
-name: Baldi's Basics Plus iOS - FAST v6
+name: Baldi's Basics Plus iOS - FAST v7
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/baldis-plus-ios.yml"
 
 permissions:
   contents: read
@@ -636,98 +633,33 @@ jobs:
 
       - name: Activate Unity Personal automatically
         env:
-          UNITY_HUB_PATH: /opt/unityhub/unityhub
+          UNITY_HUB_PATH: /usr/local/bin/unity-hub
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          GLOBAL_NODE_MODULES="$(npm root -g)"
-          LICENSE_MODULE="$GLOBAL_NODE_MODULES/@rage-against-the-pixel/unity-cli/dist/license-client.js"
+          echo "===== UNITY CLI ====="
+          unity-cli --version || true
 
-          if [ ! -f "$LICENSE_MODULE" ]; then
-            echo "ERROR: unity-cli licensing module not found"
-            exit 1
-          fi
+          echo "===== UNITY LICENSING CLIENT ====="
+          unity-cli license-version || true
 
-          export LICENSE_MODULE
+          echo "===== ACTIVATE UNITY PERSONAL ====="
+          unity-cli activate-license \
+            --license personal \
+            --email "$UNITY_EMAIL" \
+            --password "$UNITY_PASSWORD" \
+            --verbose
 
-          node <<'NODE'
-          const {
-            LicensingClient,
-            LicenseType
-          } = require(process.env.LICENSE_MODULE);
-
-          async function main() {
-            const client = new LicensingClient('6.x');
-
-            await client.Activate(
-              {
-                licenseType: LicenseType.personal,
-                username: process.env.UNITY_EMAIL,
-                password: process.env.UNITY_PASSWORD
-              },
-              true
-            );
-
-            console.log("UNITY PERSONAL ACTIVATION: SUCCESS");
-          }
-
-          main().catch((error) => {
-            console.error("UNITY PERSONAL ACTIVATION FAILED:");
-            console.error(error && error.message ? error.message : error);
-            process.exit(1);
-          });
-          NODE
-
+          echo "===== LICENSE CONTEXT ====="
           unity-cli license-context || true
 
-      - name: Export activated Unity license for GameCI
-        id: export_license
-        shell: bash
-        run: |
-          set -e
-
-          LICENSE_FILE=""
-
-          for CANDIDATE in \
-            "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf" \
-            "$HOME/.config/unity3d/Unity/Unity_lic.ulf" \
-            "/root/.local/share/unity3d/Unity/Unity_lic.ulf" \
-            "/root/.config/unity3d/Unity/Unity_lic.ulf"
-          do
-            if [ -s "$CANDIDATE" ]; then
-              LICENSE_FILE="$CANDIDATE"
-              break
-            fi
-          done
-
-          if [ -z "$LICENSE_FILE" ]; then
-            LICENSE_FILE="$(
-              find "$HOME" /root /usr/share/unity3d /var/lib/unity3d \
-                -type f \( -name "Unity_lic.ulf" -o -name "*.ulf" \) \
-                2>/dev/null \
-                | head -1
-            )"
-          fi
-
-          if [ -z "$LICENSE_FILE" ] || [ ! -s "$LICENSE_FILE" ]; then
-            echo "ERROR: activation succeeded but Unity_lic.ulf was not found"
-            exit 1
-          fi
-
-          echo "LICENSE_FILE=$LICENSE_FILE"
-
-          {
-            echo "UNITY_LICENSE<<UNITY_LICENSE_EOF"
-            cat "$LICENSE_FILE"
-            echo
-            echo "UNITY_LICENSE_EOF"
-          } >> "$GITHUB_ENV"
-
-          echo "UNITY_LICENSE exported for GameCI."
+          echo "UNITY PERSONAL ACTIVATION: SUCCESS"
 
       - name: Install exact Unity Editor + iOS module
         id: unity_setup
+        env:
+          UNITY_HUB_PATH: /usr/local/bin/unity-hub
         shell: bash
         run: |
           set -euo pipefail
@@ -817,7 +749,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v6"
+            echo "BALDI PLUS iOS FAST v7"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -845,7 +777,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v6
+          name: Baldis-Plus-iOS-Diagnostics-v7
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -866,7 +798,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v6
+          name: Baldis-Plus-iOS-Xcode-STAGED-v7
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -877,7 +809,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v6 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v7 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -890,7 +822,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v6
+          name: Baldis-Plus-iOS-Xcode-STAGED-v7
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -984,17 +916,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v6-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v7-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v6-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v7-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v6-Signulous
+          name: Baldis-Plus-iOS-v7-Signulous
           path: |
-            output/Baldis-Plus-iOS-v6-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v7-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
