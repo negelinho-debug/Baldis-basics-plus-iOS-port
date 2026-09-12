@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v4
+name: Baldi's Basics Plus iOS - FAST v5
 
 on:
   workflow_dispatch:
@@ -737,7 +737,7 @@ jobs:
           unity-cli setup-unity \
             --unity-project "$PROJECT" \
             --unity-version "$VERSION" \
-            --channel b,f \
+            --changeset 0bffbba03cb9 \
             --build-targets iOS \
             --modules ios \
             --json \
@@ -806,7 +806,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v4"
+            echo "BALDI PLUS iOS FAST v5"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -834,7 +834,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v4
+          name: Baldis-Plus-iOS-Diagnostics-v5
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -855,7 +855,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v4
+          name: Baldis-Plus-iOS-Xcode-STAGED-v5
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -866,7 +866,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v4 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v5 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -879,7 +879,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v4
+          name: Baldis-Plus-iOS-Xcode-STAGED-v5
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -973,17 +973,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v4-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v5-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v4-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v5-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v4-Signulous
+          name: Baldis-Plus-iOS-v5-Signulous
           path: |
-            output/Baldis-Plus-iOS-v4-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v5-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
