@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v10
+name: Baldi's Basics Plus iOS - FIRST IPA v11
 
 on:
   workflow_dispatch:
@@ -364,19 +364,14 @@ jobs:
 
           VERSION_FILE="$PROJECT/ProjectSettings/ProjectVersion.txt"
 
-          if [ ! -f "$VERSION_FILE" ]; then
-            DETECTED="${{ steps.inspect.outputs.unity_version }}"
+          mkdir -p "$PROJECT/ProjectSettings"
 
-            if [ "$DETECTED" = "UNKNOWN" ]; then
-              echo "ERROR: ProjectVersion.txt missing and Unity version could not be detected."
-              exit 1
-            fi
+          cat > "$VERSION_FILE" <<'UNITY_VERSION_EOF'
+          m_EditorVersion: 2021.3.36f1
+          m_EditorVersionWithRevision: 2021.3.36f1 (7a0645017be0)
+          UNITY_VERSION_EOF
 
-            mkdir -p "$PROJECT/ProjectSettings"
-            printf 'm_EditorVersion: %s\n' "$DETECTED" > "$VERSION_FILE"
-          fi
-
-          echo "===== PROJECT VERSION ====="
+          echo "===== PROJECT VERSION - FIRST IPA MODE ====="
           cat "$VERSION_FILE"
 
           mkdir -p "$PROJECT/Assets/Editor"
@@ -526,7 +521,7 @@ jobs:
       - name: Install Unity CLI + Unity Hub
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           npm install -g @rage-against-the-pixel/unity-cli
 
@@ -568,92 +563,20 @@ jobs:
 
           sudo chmod +x /opt/unityhub/unityhub
 
-          # unity-cli spawns a command literally named "unity-hub".
-          sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unity-hub
-          sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unityhub-ci
-
-          echo "UNITY_HUB_PATH=/usr/local/bin/unity-hub" >> "$GITHUB_ENV"
-          echo "/usr/local/bin" >> "$GITHUB_PATH"
+          echo "UNITY_HUB_PATH=/opt/unityhub/unityhub" >> "$GITHUB_ENV"
           echo "/opt/unityhub" >> "$GITHUB_PATH"
 
-          echo "===== UNITY HUB CHECK ====="
-          command -v unityhub
-          command -v unity-hub
-          ls -l /usr/local/bin/unity-hub
-
-          UNITY_HUB_PATH=/usr/local/bin/unity-hub unity-cli hub-version || true
-          UNITY_HUB_PATH=/usr/local/bin/unity-hub unity-cli hub-path || true
-
-      - name: Install exact Unity 2021.2.0b11 + iOS module
-        id: unity_setup
-        env:
-          UNITY_HUB_PATH: /usr/local/bin/unity-hub
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          PROJECT="${{ steps.prepare.outputs.project }}"
-
-          echo "===== INSTALL EXACT UNITY ====="
-          echo "PROJECT=$PROJECT"
-          echo "UNITY=2021.2.0b11"
-          echo "CHANGESET=0bffbba03cb9"
-
-          unity-cli setup-unity \
-            --unity-project "$PROJECT" \
-            --unity-version 2021.2.0b11 \
-            --changeset 0bffbba03cb9 \
-            --arch x86_64 \
-            --build-targets iOS \
-            --modules ios \
-            --json \
-            | tee output/unity-setup.json
-
-          echo "===== INSTALLED EDITORS ====="
-          unity-cli hub editors --installed \
-            | tee output/unity-editors.txt
-
-          EDITOR="$(
-            find /opt /usr "$HOME" \
-              -type f \
-              \( -path '*/Editor/Unity' -o -name 'Unity' \) \
-              2>/dev/null \
-              | grep -E '2021\.2\.0b11|Editor/Unity' \
-              | head -1 || true
-          )"
-
-          if [ -z "$EDITOR" ]; then
-            EDITOR="$(
-              find /opt /usr "$HOME" \
-                -type f \
-                -path '*/Editor/Unity' \
-                2>/dev/null \
-                | head -1 || true
-            )"
-          fi
-
-          if [ -z "$EDITOR" ]; then
-            echo "ERROR: Unity Editor executable not found after installation"
-            find /opt /usr "$HOME" -maxdepth 7 -type f -name Unity 2>/dev/null | head -100 || true
-            exit 1
-          fi
-
-          echo "UNITY_EDITOR_PATH=$EDITOR" >> "$GITHUB_ENV"
-          echo "unity_editor=$EDITOR" >> "$GITHUB_OUTPUT"
-          echo "UNITY_EDITOR=$EDITOR"
+          UNITY_HUB_PATH=/opt/unityhub/unityhub unity-cli hub-version || true
 
       - name: Prepare Unity Licensing Client
         env:
-          UNITY_HUB_PATH: /usr/local/bin/unity-hub
+          UNITY_HUB_PATH: /opt/unityhub/unityhub
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           find_client() {
-            find \
-              /usr \
-              /opt \
-              "$HOME" \
+            find /usr /opt "$HOME" \
               -type f \
               -name "Unity.Licensing.Client" \
               2>/dev/null \
@@ -663,16 +586,25 @@ jobs:
           CLIENT="$(find_client || true)"
 
           if [ -z "$CLIENT" ]; then
-            echo "ERROR: Unity.Licensing.Client not found after Unity install."
-            find /usr /opt "$HOME" \
-              -type f \
-              \( -iname "*Licensing*Client*" -o -iname "Unity*" \) \
-              2>/dev/null \
-              | head -300 || true
-            exit 1
+            echo "Licensing client not found in Hub package."
+            echo "Installing a small Unity editor copy so the licensing client exists."
+
+            UNITY_HUB_PATH=/opt/unityhub/unityhub \
+            unity-cli setup-unity \
+              --unity-project none \
+              --unity-version 2018.2.0f2 \
+              --changeset 787658998520 \
+              --build-targets iOS \
+              --modules ios \
+              --json
+
+            CLIENT="$(find_client || true)"
           fi
 
-          echo "FOUND_CLIENT=$CLIENT"
+          if [ -z "$CLIENT" ]; then
+            echo "ERROR: Unity.Licensing.Client not found."
+            exit 1
+          fi
 
           CLIENT_DIR="$(dirname "$CLIENT")"
 
@@ -681,71 +613,116 @@ jobs:
           sudo cp -a "$CLIENT_DIR"/. /opt/unityhub/UnityLicensingClient/
           sudo chmod +x /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client || true
 
-          test -x /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
+          test -f /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
 
-      - name: Activate Unity Personal
-        id: unity_license
-        uses: RageAgainstThePixel/activate-unity-license@v2
-        with:
-          license: Personal
-          username: ${{ secrets.UNITY_USERNAME }}
-          password: ${{ secrets.UNITY_PASSWORD }}
-          license-version: 6.x
-
-      - name: Verify Unity license
-        if: always()
+      - name: Activate Unity Personal automatically
         env:
-          UNITY_HUB_PATH: /usr/local/bin/unity-hub
+          UNITY_HUB_PATH: /opt/unityhub/unityhub
         shell: bash
         run: |
-          set +e
+          set -e
 
-          echo "===== LICENSE CONTEXT ====="
-          unity-cli license-context || true
+          GLOBAL_NODE_MODULES="$(npm root -g)"
+          LICENSE_MODULE="$GLOBAL_NODE_MODULES/@rage-against-the-pixel/unity-cli/dist/license-client.js"
 
-          echo "===== LICENSE FILES ====="
-          find "$HOME" /root /usr/share/unity3d /var/lib/unity3d \
-            -type f \( -name "Unity_lic.ulf" -o -name "*.ulf" \) \
-            -print 2>/dev/null | head -50 || true
-
-          echo "===== LICENSING LOG ====="
-          LOG_PATH="$(unity-cli licensing-client-logs 2>/dev/null | tail -1 || true)"
-          echo "$LOG_PATH"
-          if [ -n "$LOG_PATH" ] && [ -f "$LOG_PATH" ]; then
-            tail -120 "$LOG_PATH" || true
+          if [ ! -f "$LICENSE_MODULE" ]; then
+            echo "ERROR: unity-cli licensing module not found"
+            exit 1
           fi
 
-      - name: Build Unity iOS Xcode project directly
-        id: unity_build
-        continue-on-error: true
-        env:
-          UNITY_HUB_PATH: /usr/local/bin/unity-hub
+          export LICENSE_MODULE
+
+          node <<'NODE'
+          const {
+            LicensingClient,
+            LicenseType
+          } = require(process.env.LICENSE_MODULE);
+
+          async function main() {
+            const client = new LicensingClient('6.x');
+
+            await client.Activate(
+              {
+                licenseType: LicenseType.personal,
+                username: process.env.UNITY_EMAIL,
+                password: process.env.UNITY_PASSWORD
+              },
+              true
+            );
+
+            console.log("UNITY PERSONAL ACTIVATION: SUCCESS");
+          }
+
+          main().catch((error) => {
+            console.error("UNITY PERSONAL ACTIVATION FAILED:");
+            console.error(error && error.message ? error.message : error);
+            process.exit(1);
+          });
+          NODE
+
+          unity-cli license-context || true
+
+      - name: Export activated Unity license for GameCI
+        id: export_license
         shell: bash
         run: |
-          set -o pipefail
+          set -e
 
-          PROJECT="${{ steps.prepare.outputs.project }}"
-          EDITOR="${{ steps.unity_setup.outputs.unity_editor }}"
+          LICENSE_FILE=""
 
-          echo "===== DIRECT UNITY BUILD ====="
-          echo "PROJECT=$PROJECT"
-          echo "EDITOR=$EDITOR"
+          for CANDIDATE in \
+            "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf" \
+            "$HOME/.config/unity3d/Unity/Unity_lic.ulf" \
+            "/root/.local/share/unity3d/Unity/Unity_lic.ulf" \
+            "/root/.config/unity3d/Unity/Unity_lic.ulf"
+          do
+            if [ -s "$CANDIDATE" ]; then
+              LICENSE_FILE="$CANDIDATE"
+              break
+            fi
+          done
 
-          unity-cli run \
-            --unity-editor "$EDITOR" \
-            --unity-project "$PROJECT" \
-            --log-name "baldi-ios-build" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -buildTarget iOS \
-            -executeMethod BaldiIOSBuild.PerformBuild \
-            -logFile - \
-            2>&1 | tee output/unity-build.log
+          if [ -z "$LICENSE_FILE" ]; then
+            LICENSE_FILE="$(
+              find "$HOME" /root /usr/share/unity3d /var/lib/unity3d \
+                -type f \( -name "Unity_lic.ulf" -o -name "*.ulf" \) \
+                2>/dev/null \
+                | head -1
+            )"
+          fi
 
-          RC=${PIPESTATUS[0]}
-          echo "UNITY_EXIT=$RC" | tee output/unity-exit.txt
-          exit "$RC"
+          if [ -z "$LICENSE_FILE" ] || [ ! -s "$LICENSE_FILE" ]; then
+            echo "ERROR: activation succeeded but Unity_lic.ulf was not found"
+            exit 1
+          fi
+
+          echo "LICENSE_FILE=$LICENSE_FILE"
+
+          {
+            echo "UNITY_LICENSE<<UNITY_LICENSE_EOF"
+            cat "$LICENSE_FILE"
+            echo
+            echo "UNITY_LICENSE_EOF"
+          } >> "$GITHUB_ENV"
+
+          echo "UNITY_LICENSE exported for GameCI."
+
+      - name: Build FIRST iOS Xcode project - stable Unity
+        id: unity_build
+        continue-on-error: true
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_EMAIL: ${{ env.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ env.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
+        with:
+          projectPath: ${{ steps.prepare.outputs.project }}
+          unityVersion: 2021.3.36f1
+          customImage: unityci/editor:ubuntu-2021.3.36f1-ios-3
+          targetPlatform: iOS
+          buildMethod: BaldiIOSBuild.PerformBuild
+          allowDirtyBuild: true
+          versioning: None
 
       - name: Locate Unity iOS Xcode output
         id: xcode
@@ -779,7 +756,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v10"
+            echo "BALDI PLUS iOS FIRST IPA v11"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -793,9 +770,6 @@ jobs:
           tail -400 output/assetripper.log \
             > output/assetripper-tail.txt 2>/dev/null || true
 
-          echo "===== UNITY CLI EDITOR LOGS =====" > output/unity-editor-logs.txt
-          unity-cli editor-logs >> output/unity-editor-logs.txt 2>&1 || true
-
           PROJECT="$(cat output/project-path.txt 2>/dev/null || true)"
 
           if [ -n "$PROJECT" ]; then
@@ -807,7 +781,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v10
+          name: Baldis-Plus-iOS-Diagnostics-v11-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -828,7 +802,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v10
+          name: Baldis-Plus-iOS-Xcode-STAGED-v11
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -839,7 +813,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v10 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v11-FIRST-IPA and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -852,7 +826,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v10
+          name: Baldis-Plus-iOS-Xcode-STAGED-v11
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -946,17 +920,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v10-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v11-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v10-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v11-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v10-Signulous
+          name: Baldis-Plus-iOS-v11-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v10-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v11-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
