@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FIRST IPA v12
+name: Baldi's Basics Plus iOS - FIRST IPA v13 IL2CPP FIX
 
 on:
   workflow_dispatch:
@@ -258,7 +258,8 @@ jobs:
           set -euo pipefail
 
           RIPPER="$(cat output/assetripper-path.txt)"
-          DATA_DIR="$(cat output/unity-data-dir.txt)"
+          GAME_ROOT="$PWD/work/android"
+          APK_PATH="$PWD/work/BaldisPlus.apk"
           PORT=3333
           EXPORT_DIR="$PWD/recovered/BaldisPlus"
 
@@ -284,12 +285,19 @@ jobs:
             exit 1
           fi
 
+          echo "===== ASSETRIPPER INPUT ====="
+          echo "Loading FULL extracted Android root so AssetRipper can see:"
+          echo " - assets/bin/Data"
+          echo " - lib/arm64-v8a/libil2cpp.so"
+          echo " - global-metadata.dat"
+          echo "GAME_ROOT=$GAME_ROOT"
+
           LOAD_CODE="$(
             curl -sS \
               -o output/load-response.txt \
               -w '%{http_code}' \
               -H 'Content-Type: application/x-www-form-urlencoded' \
-              --data-urlencode "Path=$DATA_DIR" \
+              --data-urlencode "Path=$GAME_ROOT" \
               "http://127.0.0.1:${PORT}/LoadFolder"
           )"
 
@@ -299,6 +307,37 @@ jobs:
             cat output/load-response.txt || true
             tail -250 output/assetripper.log || true
             exit 1
+          fi
+
+          echo "===== ASSETRIPPER BACKEND CHECK ====="
+          grep -Ei 'scripting backend|IL2CPP|Cpp2IL|global-metadata|libil2cpp' \
+            output/assetripper.log \
+            | tail -120 \
+            | tee output/assetripper-backend.txt || true
+
+          if grep -Fq "Files use the 'Unknown' scripting backend." output/assetripper.log; then
+            echo "WARNING: folder load still reported Unknown backend."
+            echo "Retrying by loading the APK file directly."
+
+            curl -sS -X POST "http://127.0.0.1:${PORT}/Reset" >/dev/null || true
+            sleep 2
+
+            LOAD_FILE_CODE="$(
+              curl -sS \
+                -o output/load-file-response.txt \
+                -w '%{http_code}' \
+                -H 'Content-Type: application/x-www-form-urlencoded' \
+                --data-urlencode "Path=$APK_PATH" \
+                "http://127.0.0.1:${PORT}/LoadFile"
+            )"
+
+            echo "LOAD_FILE_HTTP=$LOAD_FILE_CODE"
+
+            if [ "$LOAD_FILE_CODE" != "200" ] && [ "$LOAD_FILE_CODE" != "302" ]; then
+              cat output/load-file-response.txt || true
+              tail -300 output/assetripper.log || true
+              exit 1
+            fi
           fi
 
           EXPORT_CODE="$(
@@ -341,6 +380,25 @@ jobs:
           echo "===== RECOVERED PROJECT ====="
           echo "$PROJECT"
           find "$PROJECT/Assets" -type f -name '*.unity' | head -100
+
+          {
+            echo "===== ASSETRIPPER SCRIPT/BACKEND SUMMARY ====="
+            grep -Ei \
+              'scripting backend|IL2CPP|Cpp2IL|decompil|script export|game assemblies|global-metadata|libil2cpp' \
+              output/assetripper.log \
+              | tail -300 || true
+          } > output/assetripper-script-summary.txt
+
+          cat output/assetripper-script-summary.txt
+
+          GAME_CS="$(
+            find "$PROJECT/Assets" -type f -name '*.cs' \
+              | grep -Ev '/(Packages|Plugins/|Editor/)' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo "RECOVERED_GAME_CS=$GAME_CS" | tee output/recovered-game-code.txt
 
       - name: Prepare recovered project for iOS
         id: prepare
@@ -808,7 +866,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FIRST IPA v12"
+            echo "BALDI PLUS iOS FIRST IPA v13 IL2CPP FIX"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -867,6 +925,37 @@ jobs:
               | head -300 || true
           } > output/important-errors.txt
 
+          echo "===== GAMECI / UNITY EDITOR LOGS ====="
+          mkdir -p output/gameci-home-logs
+
+          for ROOT in \
+            "$RUNNER_TEMP/_github_home" \
+            "$RUNNER_TEMP" \
+            "$HOME"
+          do
+            if [ -d "$ROOT" ]; then
+              find "$ROOT" -type f \
+                \( -name 'Editor.log' \
+                   -o -name 'Unity.Licensing.Client.log' \
+                   -o -name 'Unity.Entitlements.Audit.log' \) \
+                -print 2>/dev/null \
+                | head -100 \
+                | while IFS= read -r F; do
+                    SAFE="$(echo "$F" | sed 's#/#_#g')"
+                    cp "$F" "output/gameci-home-logs/$SAFE" 2>/dev/null || true
+                  done
+            fi
+          done
+
+          {
+            echo
+            echo "===== GAMECI HOME LOG ERRORS ====="
+            grep -RinE \
+              '(^|[^A-Za-z])(error|exception|fatal|CS[0-9]{4}|BuildFailed|BuildPlayer|compilation failed|script compilation|Aborting batchmode)' \
+              output/gameci-home-logs 2>/dev/null \
+              | head -500 || true
+          } >> output/important-errors.txt
+
           echo "===== IMPORTANT ERRORS ====="
           cat output/important-errors.txt
 
@@ -874,7 +963,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v12-FIRST-IPA
+          name: Baldis-Plus-iOS-Diagnostics-v13-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -895,7 +984,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v12
+          name: Baldis-Plus-iOS-Xcode-STAGED-v13
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -906,7 +995,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v12-FIRST-IPA and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v13-FIRST-IPA and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -919,7 +1008,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v12
+          name: Baldis-Plus-iOS-Xcode-STAGED-v13
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -1013,17 +1102,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v12-FIRST-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v13-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v12-FIRST-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v13-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v12-FIRST-IPA
+          name: Baldis-Plus-iOS-v13-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v12-FIRST-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v13-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
