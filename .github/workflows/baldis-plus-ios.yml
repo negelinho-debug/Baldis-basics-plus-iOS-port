@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v8 CLEAN
+name: Baldi's Basics Plus iOS - FAST v9
 
 on:
   workflow_dispatch:
@@ -360,17 +360,14 @@ jobs:
 
           VERSION_FILE="$PROJECT/ProjectSettings/ProjectVersion.txt"
 
-          if [ ! -f "$VERSION_FILE" ]; then
-            DETECTED="${{ steps.inspect.outputs.unity_version }}"
+          # AssetRipper can export only m_EditorVersion.
+          # unity-setup@v2 requires m_EditorVersionWithRevision as well.
+          mkdir -p "$PROJECT/ProjectSettings"
 
-            if [ "$DETECTED" = "UNKNOWN" ]; then
-              echo "ERROR: ProjectVersion.txt missing and Unity version could not be detected."
-              exit 1
-            fi
-
-            mkdir -p "$PROJECT/ProjectSettings"
-            printf 'm_EditorVersion: %s\n' "$DETECTED" > "$VERSION_FILE"
-          fi
+          cat > "$VERSION_FILE" <<'UNITY_VERSION_EOF'
+          m_EditorVersion: 2021.2.0b11
+          m_EditorVersionWithRevision: 2021.2.0b11 (0bffbba03cb9)
+          UNITY_VERSION_EOF
 
           echo "===== PROJECT VERSION ====="
           cat "$VERSION_FILE"
@@ -503,6 +500,7 @@ jobs:
         with:
           unity-version: "2021.2.0b11 (0bffbba03cb9)"
           version-file: ${{ steps.prepare.outputs.project }}/ProjectSettings/ProjectVersion.txt
+          architecture: x86_64
           build-targets: iOS
           cache-installation: false
 
@@ -557,7 +555,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v8 CLEAN"
+            echo "BALDI PLUS iOS FAST v9"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -585,7 +583,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v8
+          name: Baldis-Plus-iOS-Diagnostics-v9
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -606,7 +604,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v8
+          name: Baldis-Plus-iOS-Xcode-STAGED-v9
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -617,7 +615,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v8 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v9 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -630,7 +628,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v8
+          name: Baldis-Plus-iOS-Xcode-STAGED-v9
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -724,17 +722,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v8-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v9-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v8-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v9-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v8-Signulous
+          name: Baldis-Plus-iOS-v9-Signulous
           path: |
-            output/Baldis-Plus-iOS-v8-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v9-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
