@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FIRST IPA v16 DIRECT HUB
+name: Baldi's Basics Plus iOS - FIRST IPA v17 HUB CMD FIX
 
 on:
   workflow_dispatch:
@@ -636,20 +636,20 @@ jobs:
           echo "CHANGESET=$CHANGESET"
 
           # Tell Hub exactly where to install Editors.
-          timeout 120s xvfb-run -a "$HUB" --no-sandbox --headless \
+          timeout 120s env -u DBUS_SESSION_BUS_ADDRESS xvfb-run -a "$HUB" --no-sandbox --headless \
             install-path -s "$ROOT"
 
           # Install the exact beta Editor and iOS Build Support.
           # This completely bypasses RageAgainstThePixel/unity-setup,
           # including its broken post-step that reported "Unity Hub is not installed".
-          timeout 1800s xvfb-run -a "$HUB" --no-sandbox --headless --errors \
+          timeout 1800s env -u DBUS_SESSION_BUS_ADDRESS xvfb-run -a "$HUB" --no-sandbox --headless \
             install \
             --version "$VERSION" \
             --changeset "$CHANGESET" \
             --module ios
 
           echo "===== INSTALLED EDITORS ====="
-          timeout 120s xvfb-run -a "$HUB" --no-sandbox --headless \
+          timeout 120s env -u DBUS_SESSION_BUS_ADDRESS xvfb-run -a "$HUB" --no-sandbox --headless \
             editors -i || true
 
           EDITOR="$ROOT/$VERSION/Editor/Unity"
@@ -760,7 +760,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FIRST IPA v16 DIRECT HUB"
+            echo "BALDI PLUS iOS FIRST IPA v17 HUB CMD FIX"
             echo "========================================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -800,7 +800,7 @@ jobs:
                 \( -name 'Editor.log' \
                    -o -name 'Unity.Licensing.Client.log' \
                    -o -name 'Unity.Entitlements.Audit.log' \
-                   -o -name '*baldi-ios-v16-direct-build*' \
+                   -o -name '*baldi-ios-v17-direct-build*' \
                    -o -name '*.log' \) \
                 -print 2>/dev/null \
                 | head -150 \
@@ -833,7 +833,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v16-FIRST-IPA
+          name: Baldis-Plus-iOS-Diagnostics-v17-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -854,7 +854,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v16
+          name: Baldis-Plus-iOS-Xcode-STAGED-v17
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -870,7 +870,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v16
+          name: Baldis-Plus-iOS-Xcode-STAGED-v17
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -964,17 +964,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v16-FIRST-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v17-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v16-FIRST-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v17-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v16-FIRST-IPA
+          name: Baldis-Plus-iOS-v17-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v16-FIRST-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v17-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
