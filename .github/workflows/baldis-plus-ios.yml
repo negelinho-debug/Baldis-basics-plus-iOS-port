@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FIRST IPA v15 FAST HUB
+name: Baldi's Basics Plus iOS - FIRST IPA v16 DIRECT HUB
 
 on:
   workflow_dispatch:
@@ -608,36 +608,80 @@ jobs:
           echo "/usr/local/bin" >> "$GITHUB_PATH"
 
           echo "REAL_HUB=$REAL_HUB"
+          echo "REAL_UNITY_HUB=$REAL_HUB" >> "$GITHUB_ENV"
+
+          UNITY_INSTALL_ROOT="$HOME/Unity/Hub/Editor"
+          mkdir -p "$UNITY_INSTALL_ROOT"
+          echo "UNITY_INSTALL_ROOT=$UNITY_INSTALL_ROOT" >> "$GITHUB_ENV"
+
           ls -l /opt/unityhub/unityhub
 
-          timeout 30s /opt/unityhub/unityhub -- --version || true
+          timeout 30s xvfb-run -a "$REAL_HUB" --no-sandbox --headless help >/dev/null 2>&1 || true
 
-      - name: Install exact Unity 2021.2.0b11 + iOS support on host
+      - name: Install exact Unity 2021.2.0b11 + iOS support MANUALLY
         id: unity_setup
-        uses: RageAgainstThePixel/unity-setup@v2
-        env:
-          UNITY_HUB_PATH: /opt/unityhub/unityhub
-        with:
-          unity-version: "2021.2.0b11 (0bffbba03cb9)"
-          version-file: ${{ steps.prepare.outputs.project }}/ProjectSettings/ProjectVersion.txt
-          architecture: x86_64
-          build-targets: iOS
-          cache-installation: false
-
-      - name: Show installed Unity paths
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "UNITY_HUB_PATH=${UNITY_HUB_PATH:-}"
-          echo "UNITY_EDITOR_PATH=${UNITY_EDITOR_PATH:-}"
-          echo "UNITY_PROJECT_PATH=${UNITY_PROJECT_PATH:-}"
-          echo "setup editor=${{ steps.unity_setup.outputs.unity-editor-path }}"
-          echo "setup project=${{ steps.unity_setup.outputs.unity-project-path }}"
+          HUB="${REAL_UNITY_HUB}"
+          ROOT="${UNITY_INSTALL_ROOT}"
+          VERSION="2021.2.0b11"
+          CHANGESET="0bffbba03cb9"
 
-          test -x "${{ steps.unity_setup.outputs.unity-editor-path }}"
+          echo "===== MANUAL UNITY HUB INSTALL ====="
+          echo "HUB=$HUB"
+          echo "ROOT=$ROOT"
+          echo "VERSION=$VERSION"
+          echo "CHANGESET=$CHANGESET"
 
-      - name: Activate Unity Personal on host
+          # Tell Hub exactly where to install Editors.
+          timeout 120s xvfb-run -a "$HUB" --no-sandbox --headless \
+            install-path -s "$ROOT"
+
+          # Install the exact beta Editor and iOS Build Support.
+          # This completely bypasses RageAgainstThePixel/unity-setup,
+          # including its broken post-step that reported "Unity Hub is not installed".
+          timeout 1800s xvfb-run -a "$HUB" --no-sandbox --headless --errors \
+            install \
+            --version "$VERSION" \
+            --changeset "$CHANGESET" \
+            --module ios
+
+          echo "===== INSTALLED EDITORS ====="
+          timeout 120s xvfb-run -a "$HUB" --no-sandbox --headless \
+            editors -i || true
+
+          EDITOR="$ROOT/$VERSION/Editor/Unity"
+
+          if [ ! -x "$EDITOR" ]; then
+            EDITOR="$(
+              find "$ROOT" "$HOME" /opt \
+                -type f \
+                -path "*/$VERSION/Editor/Unity" \
+                -print 2>/dev/null \
+                | head -1 || true
+            )"
+          fi
+
+          if [ -z "$EDITOR" ] || [ ! -x "$EDITOR" ]; then
+            echo "ERROR: Exact Unity Editor executable not found after Hub install."
+            find "$ROOT" "$HOME" /opt \
+              -maxdepth 8 \
+              -type f \
+              -name Unity \
+              -print 2>/dev/null \
+              | head -200 || true
+            exit 1
+          fi
+
+          echo "UNITY_EDITOR_PATH=$EDITOR" >> "$GITHUB_ENV"
+          echo "unity-editor-path=$EDITOR" >> "$GITHUB_OUTPUT"
+
+          echo "UNITY_EDITOR=$EDITOR"
+          "$EDITOR" -version || true
+
+      - name: Activate Unity Personal on SAME host
         id: unity_license
         uses: RageAgainstThePixel/activate-unity-license@v2
         with:
@@ -646,19 +690,39 @@ jobs:
           password: ${{ secrets.UNITY_PASSWORD }}
           license-version: 6.x
 
-      - name: Build FIRST iOS Xcode project on host
+      - name: Build FIRST iOS Xcode project DIRECTLY
         id: unity_build_host
-        uses: RageAgainstThePixel/unity-action@v3
-        with:
-          log-name: baldi-ios-v14-host-build
-          build-target: iOS
-          project-path: ${{ steps.prepare.outputs.project }}
-          args: >-
-            -quit
-            -nographics
-            -batchmode
-            -executeMethod
-            BaldiIOSBuild.PerformBuild
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+
+          PROJECT="${{ steps.prepare.outputs.project }}"
+          EDITOR="${UNITY_EDITOR_PATH}"
+
+          echo "===== DIRECT UNITY BUILD ON LICENSED HOST ====="
+          echo "PROJECT=$PROJECT"
+          echo "EDITOR=$EDITOR"
+
+          mkdir -p output
+
+          "$EDITOR" \
+            -batchmode \
+            -nographics \
+            -quit \
+            -projectPath "$PROJECT" \
+            -buildTarget iOS \
+            -executeMethod BaldiIOSBuild.PerformBuild \
+            -logFile "$PWD/output/unity-host-build.log"
+
+          RC=$?
+
+          echo "UNITY_EXIT=$RC" | tee output/unity-exit.txt
+
+          echo "===== UNITY LOG TAIL ====="
+          tail -250 output/unity-host-build.log || true
+
+          exit "$RC"
 
       - name: Locate Unity iOS Xcode output
         id: xcode
@@ -696,7 +760,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FIRST IPA v15 FAST HUB"
+            echo "BALDI PLUS iOS FIRST IPA v16 DIRECT HUB"
             echo "========================================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -708,7 +772,7 @@ jobs:
             echo "UNITY_SETUP_OUTCOME=${{ steps.unity_setup.outcome }}"
             echo "UNITY_LICENSE_OUTCOME=${{ steps.unity_license.outcome }}"
             echo "UNITY_BUILD_OUTCOME=${{ steps.unity_build_host.outcome }}"
-            echo "UNITY_EDITOR=${{ steps.unity_setup.outputs.unity-editor-path }}"
+            echo "UNITY_EDITOR=${UNITY_EDITOR_PATH:-}"
             echo "XCODE_READY=${{ steps.xcode.outputs.ready }}"
           } > output/summary.txt
 
@@ -736,7 +800,7 @@ jobs:
                 \( -name 'Editor.log' \
                    -o -name 'Unity.Licensing.Client.log' \
                    -o -name 'Unity.Entitlements.Audit.log' \
-                   -o -name '*baldi-ios-v14-host-build*' \
+                   -o -name '*baldi-ios-v16-direct-build*' \
                    -o -name '*.log' \) \
                 -print 2>/dev/null \
                 | head -150 \
@@ -748,6 +812,13 @@ jobs:
           done
 
           {
+            echo "===== DIRECT UNITY BUILD ERRORS ====="
+            grep -Ein \
+              '(^|[^A-Za-z])(error|exception|fatal|CS[0-9]{4}|BuildFailed|BuildPlayer|compilation failed|script compilation|Aborting batchmode)' \
+              output/unity-host-build.log 2>/dev/null \
+              | head -600 || true
+
+            echo
             echo "===== HOST UNITY ERRORS ====="
             grep -RinE \
               '(^|[^A-Za-z])(error|exception|fatal|CS[0-9]{4}|BuildFailed|BuildPlayer|compilation failed|script compilation|Aborting batchmode)' \
@@ -762,7 +833,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v15-FIRST-IPA
+          name: Baldis-Plus-iOS-Diagnostics-v16-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -783,7 +854,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v15
+          name: Baldis-Plus-iOS-Xcode-STAGED-v16
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -799,7 +870,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v15
+          name: Baldis-Plus-iOS-Xcode-STAGED-v16
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -893,17 +964,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v15-FIRST-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v16-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v15-FIRST-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v16-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v15-FIRST-IPA
+          name: Baldis-Plus-iOS-v16-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v15-FIRST-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v16-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
