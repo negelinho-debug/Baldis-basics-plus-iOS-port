@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FIRST IPA v11
+name: Baldi's Basics Plus iOS - FIRST IPA v12
 
 on:
   workflow_dispatch:
@@ -367,8 +367,8 @@ jobs:
           mkdir -p "$PROJECT/ProjectSettings"
 
           cat > "$VERSION_FILE" <<'UNITY_VERSION_EOF'
-          m_EditorVersion: 2021.3.36f1
-          m_EditorVersionWithRevision: 2021.3.36f1 (7a0645017be0)
+          m_EditorVersion: 2021.2.0f1
+          m_EditorVersionWithRevision: 2021.2.0f1
           UNITY_VERSION_EOF
 
           echo "===== PROJECT VERSION - FIRST IPA MODE ====="
@@ -707,8 +707,8 @@ jobs:
 
           echo "UNITY_LICENSE exported for GameCI."
 
-      - name: Build FIRST iOS Xcode project - stable Unity
-        id: unity_build
+      - name: Build FIRST IPA attempt 1 - Unity 2021.2.0f1
+        id: unity_build_1
         continue-on-error: true
         uses: game-ci/unity-builder@v4
         env:
@@ -717,15 +717,17 @@ jobs:
           UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
         with:
           projectPath: ${{ steps.prepare.outputs.project }}
-          unityVersion: 2021.3.36f1
-          customImage: unityci/editor:ubuntu-2021.3.36f1-ios-3
+          unityVersion: 2021.2.0f1
           targetPlatform: iOS
           buildMethod: BaldiIOSBuild.PerformBuild
           allowDirtyBuild: true
           versioning: None
+          customParameters: >-
+            -logFile /github/workspace/output/unity-build-attempt1.log
+            -stackTraceLogType Full
 
-      - name: Locate Unity iOS Xcode output
-        id: xcode
+      - name: Check attempt 1 Xcode result
+        id: attempt1_xcode
         if: always()
         shell: bash
         run: |
@@ -743,6 +745,56 @@ jobs:
           if [ -n "$XCODE_DIR" ] && [ -d "$XCODE_DIR" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
             echo "$XCODE_DIR" > output/xcode-path.txt
+            echo "ATTEMPT 1 XCODE=$XCODE_DIR"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Attempt 1 did not produce Xcode."
+          fi
+
+      - name: Build FIRST IPA attempt 2 - Unity 2021.3.36f1 fallback
+        id: unity_build_2
+        if: steps.attempt1_xcode.outputs.ready != 'true'
+        continue-on-error: true
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_EMAIL: ${{ env.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ env.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ env.UNITY_LICENSE }}
+        with:
+          projectPath: ${{ steps.prepare.outputs.project }}
+          unityVersion: 2021.3.36f1
+          customImage: unityci/editor:ubuntu-2021.3.36f1-ios-3
+          targetPlatform: iOS
+          buildMethod: BaldiIOSBuild.PerformBuild
+          allowDirtyBuild: true
+          versioning: None
+          customParameters: >-
+            -logFile /github/workspace/output/unity-build-attempt2.log
+            -stackTraceLogType Full
+
+      - name: Locate Unity iOS Xcode output
+        id: xcode
+        if: always()
+        shell: bash
+        run: |
+          set +e
+
+          PROJECT="${{ steps.prepare.outputs.project }}"
+
+          if [ -f output/xcode-path.txt ]; then
+            XCODE_DIR="$(cat output/xcode-path.txt)"
+          else
+            XCODE_DIR="$(
+              find "$PROJECT/../.." "$PWD/build" \
+                -type d -name '*.xcodeproj' -print 2>/dev/null \
+                | head -1 \
+                | xargs -r dirname
+            )"
+          fi
+
+          if [ -n "$XCODE_DIR" ] && [ -d "$XCODE_DIR" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "$XCODE_DIR" > output/xcode-path.txt
             echo "XCODE_DIR=$XCODE_DIR"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -756,14 +808,18 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FIRST IPA v11"
+            echo "BALDI PLUS iOS FIRST IPA v12"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
             echo
             cat output/recovery-summary.txt 2>/dev/null
             echo
-            echo "UNITY_BUILD_OUTCOME=${{ steps.unity_build.outcome }}"
+            echo "ATTEMPT1_OUTCOME=${{ steps.unity_build_1.outcome }}"
+            echo "ATTEMPT1_ENGINE=${{ steps.unity_build_1.outputs.engineExitCode }}"
+            echo "ATTEMPT1_XCODE=${{ steps.attempt1_xcode.outputs.ready }}"
+            echo "ATTEMPT2_OUTCOME=${{ steps.unity_build_2.outcome }}"
+            echo "ATTEMPT2_ENGINE=${{ steps.unity_build_2.outputs.engineExitCode }}"
             echo "XCODE_READY=${{ steps.xcode.outputs.ready }}"
           } > output/summary.txt
 
@@ -775,13 +831,50 @@ jobs:
           if [ -n "$PROJECT" ]; then
             find "$PROJECT/Assets" -type f -name '*.unity' \
               > output/recovered-scenes.txt 2>/dev/null || true
+
+            mkdir -p output/project-logs
+
+            find "$PROJECT" \
+              -type f \
+              \( -name '*.log' -o -name 'Editor.log' -o -name 'Packages-Update.log' \) \
+              -print 2>/dev/null \
+              | head -80 \
+              | while IFS= read -r LOG; do
+                  NAME="$(echo "$LOG" | sed 's#/#_#g')"
+                  cp "$LOG" "output/project-logs/$NAME" 2>/dev/null || true
+                done
           fi
+
+          {
+            echo "===== ATTEMPT 1 ERRORS ====="
+            grep -Ein \
+              '(^|[^A-Za-z])(error|exception|fatal|CS[0-9]{4}|BuildFailed|BuildPlayer|compilation failed|script compilation)' \
+              output/unity-build-attempt1.log 2>/dev/null \
+              | head -300 || true
+
+            echo
+            echo "===== ATTEMPT 2 ERRORS ====="
+            grep -Ein \
+              '(^|[^A-Za-z])(error|exception|fatal|CS[0-9]{4}|BuildFailed|BuildPlayer|compilation failed|script compilation)' \
+              output/unity-build-attempt2.log 2>/dev/null \
+              | head -300 || true
+
+            echo
+            echo "===== OTHER PROJECT LOG ERRORS ====="
+            grep -RinE \
+              '(^|[^A-Za-z])(error|exception|fatal|CS[0-9]{4}|BuildFailed|BuildPlayer|compilation failed|script compilation)' \
+              output/project-logs 2>/dev/null \
+              | head -300 || true
+          } > output/important-errors.txt
+
+          echo "===== IMPORTANT ERRORS ====="
+          cat output/important-errors.txt
 
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v11-FIRST-IPA
+          name: Baldis-Plus-iOS-Diagnostics-v12-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -802,7 +895,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v11
+          name: Baldis-Plus-iOS-Xcode-STAGED-v12
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -813,7 +906,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v11-FIRST-IPA and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v12-FIRST-IPA and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -826,7 +919,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v11
+          name: Baldis-Plus-iOS-Xcode-STAGED-v12
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -920,17 +1013,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v11-FIRST-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v12-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v11-FIRST-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v12-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v11-FIRST-IPA
+          name: Baldis-Plus-iOS-v12-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v11-FIRST-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v12-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
