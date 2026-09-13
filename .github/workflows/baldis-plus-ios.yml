@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FIRST IPA v14 HOST UNITY
+name: Baldi's Basics Plus iOS - FIRST IPA v15 FAST HUB
 
 on:
   workflow_dispatch:
@@ -554,44 +554,46 @@ jobs:
             echo "CS_FILES=$(find "$PROJECT/Assets" -type f -name '*.cs' | wc -l)"
           } | tee output/recovery-summary.txt
 
-      - name: Prepare host Unity Hub
+      - name: Prepare host Unity Hub FAST
         shell: bash
         run: |
           set -euo pipefail
 
-          echo "===== HOST UNITY MODE ====="
-          echo "No GameCI Docker: license and Unity will run on the SAME machine."
-
-          sudo apt-get update -o Acquire::Retries=4 || true
-          sudo apt-get install -y \
-            ca-certificates \
-            curl \
-            gnupg \
-            xvfb \
-            libgbm1 \
-            libgtk-3-0 \
-            libnss3
+          echo "===== FAST HOST UNITY HUB ====="
+          echo "No full apt update. Only the Unity repository is refreshed."
 
           sudo install -d -m 0755 /etc/apt/keyrings
 
-          curl -fsSL https://hub.unity3d.com/linux/keys/public \
-            | sudo gpg --dearmor \
+          curl --connect-timeout 15 --max-time 60 -fsSL \
+            https://hub.unity3d.com/linux/keys/public \
+            | sudo gpg --dearmor --yes \
               -o /etc/apt/keyrings/unityhub.gpg
 
           echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/unityhub.gpg] https://hub.unity3d.com/linux/repos/deb stable main" \
             | sudo tee /etc/apt/sources.list.d/unityhub.list >/dev/null
 
-          sudo apt-get update -o Acquire::Retries=4 || true
-          sudo apt-get install -y unityhub
+          timeout 120s sudo apt-get \
+            -o Dir::Etc::sourcelist="/etc/apt/sources.list.d/unityhub.list" \
+            -o Dir::Etc::sourceparts="-" \
+            -o APT::Get::List-Cleanup="0" \
+            -o Acquire::Retries=2 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update
 
-          REAL_HUB="$(command -v unityhub)"
+          echo "===== UNITY HUB CANDIDATE ====="
+          apt-cache policy unityhub || true
+
+          timeout 180s sudo apt-get install -y --no-install-recommends unityhub
+
+          REAL_HUB="$(command -v unityhub || true)"
 
           if [ -z "$REAL_HUB" ]; then
-            echo "ERROR: Unity Hub package installed but unityhub command is missing."
+            echo "ERROR: unityhub command not found after install"
+            dpkg -L unityhub 2>/dev/null | head -200 || true
             exit 1
           fi
 
-          # unity-setup@v2 expects this Linux path.
           sudo mkdir -p /opt/unityhub
 
           sudo tee /opt/unityhub/unityhub >/dev/null <<EOF
@@ -600,8 +602,6 @@ jobs:
           EOF
 
           sudo chmod +x /opt/unityhub/unityhub
-
-          # Also expose the command name used by current unity-cli builds.
           sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unity-hub
 
           echo "UNITY_HUB_PATH=/opt/unityhub/unityhub" >> "$GITHUB_ENV"
@@ -609,7 +609,8 @@ jobs:
 
           echo "REAL_HUB=$REAL_HUB"
           ls -l /opt/unityhub/unityhub
-          /opt/unityhub/unityhub -- --version || true
+
+          timeout 30s /opt/unityhub/unityhub -- --version || true
 
       - name: Install exact Unity 2021.2.0b11 + iOS support on host
         id: unity_setup
@@ -695,7 +696,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FIRST IPA v14 HOST UNITY"
+            echo "BALDI PLUS iOS FIRST IPA v15 FAST HUB"
             echo "========================================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -761,7 +762,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v14-FIRST-IPA
+          name: Baldis-Plus-iOS-Diagnostics-v15-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -782,7 +783,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v14
+          name: Baldis-Plus-iOS-Xcode-STAGED-v15
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -798,7 +799,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v14
+          name: Baldis-Plus-iOS-Xcode-STAGED-v15
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -892,17 +893,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v14-FIRST-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v15-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v14-FIRST-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v15-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v14-FIRST-IPA
+          name: Baldis-Plus-iOS-v15-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v14-FIRST-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v15-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
