@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FIRST IPA v18 LICENSE CLIENT FIX
+name: Baldi's Basics Plus iOS - FIRST IPA v19 PIPEFIX
 
 on:
   workflow_dispatch:
@@ -729,11 +729,15 @@ jobs:
           test -x /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
 
           echo "===== STAGED CLIENT ====="
+          # Avoid pipefail + SIGPIPE from `find | head`, which made v18 fail
+          # even though the Licensing Client had already been copied correctly.
           find /opt/unityhub/UnityLicensingClient \
             -maxdepth 2 \
             -type f \
             -print \
-            | head -120
+            > output/licensing-client-files.txt || true
+
+          sed -n '1,120p' output/licensing-client-files.txt || true
 
       - name: Activate Unity Personal on SAME host
         id: unity_license
@@ -814,7 +818,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FIRST IPA v18 LICENSE CLIENT FIX"
+            echo "BALDI PLUS iOS FIRST IPA v19 PIPEFIX"
             echo "========================================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -854,7 +858,7 @@ jobs:
                 \( -name 'Editor.log' \
                    -o -name 'Unity.Licensing.Client.log' \
                    -o -name 'Unity.Entitlements.Audit.log' \
-                   -o -name '*baldi-ios-v18-direct-build*' \
+                   -o -name '*baldi-ios-v19-direct-build*' \
                    -o -name '*.log' \) \
                 -print 2>/dev/null \
                 | head -150 \
@@ -887,7 +891,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v18-FIRST-IPA
+          name: Baldis-Plus-iOS-Diagnostics-v19-FIRST-IPA
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -908,7 +912,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v18
+          name: Baldis-Plus-iOS-Xcode-STAGED-v19
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -924,7 +928,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v18
+          name: Baldis-Plus-iOS-Xcode-STAGED-v19
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -1018,17 +1022,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v18-FIRST-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v19-FIRST-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v18-FIRST-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v19-FIRST-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v18-FIRST-IPA
+          name: Baldis-Plus-iOS-v19-FIRST-IPA
           path: |
-            output/Baldis-Plus-iOS-v18-FIRST-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v19-FIRST-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
