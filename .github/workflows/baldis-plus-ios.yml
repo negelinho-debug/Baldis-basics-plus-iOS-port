@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v6
+name: Baldi's Basics Plus iOS - FAST v7 LICENSE PATH FIX
 
 on:
   workflow_dispatch:
@@ -576,7 +576,7 @@ jobs:
           sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unity-hub
           sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unityhub-ci
 
-          echo "UNITY_HUB_PATH=/usr/local/bin/unity-hub" >> "$GITHUB_ENV"
+          echo "UNITY_HUB_PATH=/opt/unityhub/unityhub" >> "$GITHUB_ENV"
           echo "/usr/local/bin" >> "$GITHUB_PATH"
           echo "/opt/unityhub" >> "$GITHUB_PATH"
 
@@ -585,7 +585,7 @@ jobs:
           command -v unity-hub
           ls -l /usr/local/bin/unity-hub
 
-          UNITY_HUB_PATH=/usr/local/bin/unity-hub unity-cli hub-version || true
+          UNITY_HUB_PATH=/opt/unityhub/unityhub unity-cli hub-version || true
 
       - name: Prepare Unity Licensing Client
         env:
@@ -608,7 +608,7 @@ jobs:
             echo "Licensing client not found in Hub package."
             echo "Installing a small Unity editor copy so the licensing client exists."
 
-            UNITY_HUB_PATH=/usr/local/bin/unity-hub \
+            UNITY_HUB_PATH=/opt/unityhub/unityhub \
             unity-cli setup-unity \
               --unity-project none \
               --unity-version 2018.2.0f2 \
@@ -743,7 +743,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v6"
+            echo "BALDI PLUS iOS FAST v7"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
