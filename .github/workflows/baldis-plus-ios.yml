@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v9 DIRECT-CDN LICENSE PATH FIX
+name: Baldi's Basics Plus iOS - FAST v10 OFFICIAL-UNITY-CLI
 
 on:
   workflow_dispatch:
@@ -652,7 +652,41 @@ jobs:
 
           echo "UNITY PERSONAL ACTIVATION: SUCCESS"
 
-      - name: Install exact Unity Editor + iOS module DIRECTLY (no Hub)
+      - name: Install official Unity CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export UNITY_CLI_HOME="$PWD/tools/unity-official-cli"
+          export UNITY_CLI_CHANNEL="beta"
+          export UNITY_NON_INTERACTIVE=1
+          export UNITY_NO_CONSENT_PROMPT=1
+          export UNITY_NO_UPDATE_CHECK=1
+
+          rm -rf "$UNITY_CLI_HOME"
+          mkdir -p "$UNITY_CLI_HOME"
+
+          echo "===== INSTALL OFFICIAL UNITY CLI ====="
+          curl -fsSL --retry 5 --retry-delay 3 \
+            https://public-cdn.cloud.unity3d.com/hub/prod/cli/install.sh \
+            -o /tmp/unity-cli-install.sh
+
+          bash /tmp/unity-cli-install.sh
+
+          echo "$UNITY_CLI_HOME/bin" >> "$GITHUB_PATH"
+
+          UNITY="$UNITY_CLI_HOME/bin/unity"
+          if [ ! -x "$UNITY" ]; then
+            echo "ERROR: official Unity CLI binary was not installed."
+            find "$UNITY_CLI_HOME" -maxdepth 4 -type f -print || true
+            exit 1
+          fi
+
+          "$UNITY" --version
+          "$UNITY" --non-interactive --no-banner --no-color doctor --format json \
+            > output/unity-cli-doctor.json 2>&1 || true
+
+      - name: Install exact Unity Editor + iOS module with official CLI
         id: unity_setup
         shell: bash
         run: |
@@ -661,64 +695,130 @@ jobs:
           PROJECT="${{ steps.prepare.outputs.project }}"
           VERSION="${{ steps.prepare.outputs.unity_version }}"
           CHANGESET="0bffbba03cb9"
-          UNITY_ROOT="$HOME/Unity/$VERSION"
+          UNITY="$PWD/tools/unity-official-cli/bin/unity"
+          INSTALL_ROOT="$HOME/UnityEditors"
+
+          export UNITY_NON_INTERACTIVE=1
+          export UNITY_NO_CONSENT_PROMPT=1
+          export UNITY_NO_UPDATE_CHECK=1
+          export UNITY_INSTALL_RETRIES=3
 
           echo "PROJECT=$PROJECT"
           echo "UNITY_VERSION=$VERSION"
           echo "CHANGESET=$CHANGESET"
-          echo "UNITY_ROOT=$UNITY_ROOT"
+          echo "INSTALL_ROOT=$INSTALL_ROOT"
 
-          rm -rf "$UNITY_ROOT"
-          mkdir -p "$UNITY_ROOT" tools/unity-downloads
+          mkdir -p "$INSTALL_ROOT"
 
-          EDITOR_URL="https://download.unity3d.com/download_unity/$CHANGESET/LinuxEditorInstaller/Unity-$VERSION.tar.xz"
-          IOS_URL="https://download.unity3d.com/download_unity/$CHANGESET/LinuxEditorTargetInstaller/UnitySetup-iOS-Support-for-Editor-$VERSION.tar.xz"
+          echo "===== SET EDITOR INSTALL PATH ====="
+          "$UNITY" --non-interactive --no-banner --no-color \
+            editors install-path --set "$INSTALL_ROOT"
 
-          echo "===== DOWNLOAD EXACT UNITY EDITOR ====="
-          curl -fL --retry 5 --retry-delay 5 \
-            "$EDITOR_URL" \
-            -o tools/unity-downloads/Unity.tar.xz
+          echo "===== PREVIEW EXACT UNITY INSTALL ====="
+          "$UNITY" --non-interactive --no-banner --no-color \
+            install "$VERSION" \
+            --changeset "$CHANGESET" \
+            --module ios \
+            --no-child-modules \
+            --dry-run \
+            --yes \
+            --accept-eula \
+            2>&1 | tee output/unity-install-dry-run.log
 
-          echo "===== DOWNLOAD EXACT iOS BUILD SUPPORT ====="
-          curl -fL --retry 5 --retry-delay 5 \
-            "$IOS_URL" \
-            -o tools/unity-downloads/iOS-Support.tar.xz
+          echo "===== INSTALL EXACT UNITY + iOS MODULE ====="
+          set +e
+          timeout 45m "$UNITY" --non-interactive --no-banner --no-color \
+            install "$VERSION" \
+            --changeset "$CHANGESET" \
+            --module ios \
+            --no-child-modules \
+            --yes \
+            --accept-eula \
+            2>&1 | tee output/unity-install.log
+          RC=${PIPESTATUS[0]}
+          set -e
 
-          echo "===== EXTRACT EDITOR ====="
-          tar -xJf tools/unity-downloads/Unity.tar.xz -C "$UNITY_ROOT"
-
-          echo "===== EXTRACT iOS SUPPORT ====="
-          tar -xJf tools/unity-downloads/iOS-Support.tar.xz -C "$UNITY_ROOT"
-
-          UNITY_BIN="$UNITY_ROOT/Editor/Unity"
-
-          if [ ! -x "$UNITY_BIN" ]; then
-            echo "Editor not found at expected path. Searching..."
-            UNITY_BIN="$(find "$UNITY_ROOT" -type f -path '*/Editor/Unity' -perm -111 | head -1 || true)"
+          if [ "$RC" -eq 124 ]; then
+            echo "ERROR: Unity install exceeded 45 minutes and was stopped."
+            exit 1
+          elif [ "$RC" -ne 0 ]; then
+            echo "ERROR: official Unity CLI install failed with exit code $RC."
+            exit "$RC"
           fi
 
-          if [ -z "${UNITY_BIN:-}" ] || [ ! -x "$UNITY_BIN" ]; then
-            echo "ERROR: Unity executable not found after extraction."
-            find "$UNITY_ROOT" -maxdepth 4 -type f | head -400
+          echo "===== INSTALLED EDITORS ====="
+          "$UNITY" --non-interactive --no-banner --no-color \
+            editors --installed --format json \
+            | tee output/unity-editors-installed.json
+
+          echo "===== RESOLVE EDITOR PATH ====="
+          PATH_JSON="$(
+            "$UNITY" --non-interactive --no-banner --no-color \
+              editors path "$VERSION" --format json
+          )"
+          printf '%s\n' "$PATH_JSON" | tee output/unity-editor-path.json
+
+          UNITY_ROOT="$(
+            printf '%s\n' "$PATH_JSON" \
+              | jq -r '
+                  .data.path
+                  // .data.installPath
+                  // (if (.data | type) == "string" then .data else empty end)
+                  // .path
+                  // empty
+                ' 2>/dev/null \
+              | head -1
+          )"
+
+          if [ -z "$UNITY_ROOT" ] || [ ! -d "$UNITY_ROOT" ]; then
+            echo "JSON path parse did not resolve an existing folder; searching install root."
+            UNITY_ROOT="$(
+              find "$INSTALL_ROOT" -maxdepth 4 -type f -path '*/Editor/Unity' -perm -111 \
+                -print 2>/dev/null \
+                | head -1 \
+                | xargs -r dirname \
+                | xargs -r dirname
+            )"
+          fi
+
+          UNITY_BIN=""
+          if [ -n "$UNITY_ROOT" ] && [ -x "$UNITY_ROOT/Editor/Unity" ]; then
+            UNITY_BIN="$UNITY_ROOT/Editor/Unity"
+          else
+            UNITY_BIN="$(
+              find "$INSTALL_ROOT" -maxdepth 6 -type f -path '*/Editor/Unity' -perm -111 \
+                -print 2>/dev/null \
+                | head -1 || true
+            )"
+          fi
+
+          if [ -z "$UNITY_BIN" ] || [ ! -x "$UNITY_BIN" ]; then
+            echo "ERROR: installed Unity Editor executable was not found."
+            find "$INSTALL_ROOT" -maxdepth 5 -print | head -500
             exit 1
           fi
 
+          UNITY_ROOT="$(dirname "$(dirname "$UNITY_BIN")")"
           echo "$UNITY_BIN" > output/unity-bin.txt
+
+          echo "UNITY_ROOT=$UNITY_ROOT"
           echo "UNITY_BIN=$UNITY_BIN"
 
-          echo "===== VERIFY iOS SUPPORT ====="
+          echo "===== VERIFY iOS BUILD SUPPORT ====="
           find "$UNITY_ROOT/Editor/Data/PlaybackEngines" -maxdepth 3 -type d -print 2>/dev/null \
             | tee output/playback-engines.txt || true
 
           if [ ! -d "$UNITY_ROOT/Editor/Data/PlaybackEngines/iOSSupport" ]; then
-            echo "ERROR: iOSSupport module was not installed into PlaybackEngines."
-            find "$UNITY_ROOT" -maxdepth 6 -iname '*ios*' -print | head -300
+            echo "ERROR: iOSSupport module is missing after official CLI install."
+            "$UNITY" --non-interactive --no-banner --no-color \
+              modules list "$VERSION" --format json \
+              > output/unity-modules.json 2>&1 || true
             exit 1
           fi
 
-          echo "DIRECT UNITY INSTALL: SUCCESS"
+          echo "OFFICIAL UNITY CLI INSTALL: SUCCESS"
 
-      - name: Build Unity iOS Xcode project DIRECTLY
+      - name: Build Unity iOS Xcode project
         id: unity_build
         continue-on-error: true
         shell: bash
@@ -728,8 +828,7 @@ jobs:
           PROJECT="${{ steps.prepare.outputs.project }}"
           UNITY_BIN="$(cat output/unity-bin.txt)"
 
-          echo "===== DIRECT UNITY BUILD ====="
-          echo "No GameCI editor image. No Unity Hub editor install."
+          echo "===== UNITY IOS BUILD ====="
           echo "UNITY_BIN=$UNITY_BIN"
           echo "PROJECT=$PROJECT"
 
@@ -779,7 +878,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v9 DIRECT-CDN"
+            echo "BALDI PLUS iOS FAST v10 OFFICIAL-UNITY-CLI"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -807,7 +906,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v6
+          name: Baldis-Plus-iOS-Diagnostics-v10
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -828,7 +927,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v6
+          name: Baldis-Plus-iOS-Xcode-STAGED-v10
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -839,7 +938,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v6 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v10 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -852,7 +951,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v6
+          name: Baldis-Plus-iOS-Xcode-STAGED-v10
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -946,17 +1045,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v6-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v10-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v6-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v10-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v6-Signulous
+          name: Baldis-Plus-iOS-v10-Signulous
           path: |
-            output/Baldis-Plus-iOS-v6-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v10-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
