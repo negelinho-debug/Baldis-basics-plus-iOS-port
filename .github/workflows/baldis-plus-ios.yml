@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v8 LICENSE PATH FIX
+name: Baldi's Basics Plus iOS - FAST v9 DIRECT-CDN LICENSE PATH FIX
 
 on:
   workflow_dispatch:
@@ -529,23 +529,110 @@ jobs:
       - name: Install Unity CLI + Unity Hub
         shell: bash
         run: |
-          set -euo pipefail
+          set -e
 
           npm install -g @rage-against-the-pixel/unity-cli
 
-          echo "===== INSTALL UNITY HUB WITH UNITY-CLI ====="
-          unity-cli hub-install --json --verbose
+          sudo apt-get update -o Acquire::Retries=4 || true
+          sudo apt-get install -y \
+            ca-certificates \
+            curl \
+            gnupg \
+            xvfb \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3
 
-          echo "===== UNITY HUB INFO ====="
-          unity-cli hub-path --json
-          unity-cli hub-version
+          sudo install -d -m 0755 /etc/apt/keyrings
 
-          echo "===== VERIFY HUB WRAPPER ====="
-          command -v unity-hub
+          curl -fsSL https://hub.unity3d.com/linux/keys/public \
+            | sudo gpg --dearmor \
+              -o /etc/apt/keyrings/unityhub.gpg
+
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/unityhub.gpg] https://hub.unity3d.com/linux/repos/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/unityhub.list >/dev/null
+
+          sudo apt-get update -o Acquire::Retries=4 || true
+          sudo apt-get install -y unityhub
+
+          HUB_CMD="$(command -v unityhub || true)"
+
+          if [ -z "$HUB_CMD" ]; then
+            echo "ERROR: unityhub command not found"
+            exit 1
+          fi
+
+          sudo mkdir -p /opt/unityhub
+
+          sudo tee /opt/unityhub/unityhub >/dev/null <<EOF
+          #!/bin/bash
+          exec xvfb-run -a "$HUB_CMD" --no-sandbox --headless "\$@"
+          EOF
+
+          sudo chmod +x /opt/unityhub/unityhub
+
+          # unity-cli internally spawns a binary literally named "unity-hub".
+          # Ubuntu's package installs "unityhub", so create both names.
+          sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unity-hub
+          sudo ln -sf /opt/unityhub/unityhub /usr/local/bin/unityhub-ci
+
+          echo "UNITY_HUB_PATH=/opt/unityhub/unityhub" >> "$GITHUB_ENV"
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
+          echo "/opt/unityhub" >> "$GITHUB_PATH"
+
+          echo "===== UNITY HUB COMMANDS ====="
           command -v unityhub || true
+          command -v unity-hub
+          ls -l /usr/local/bin/unity-hub
 
-          echo "===== VERIFY LICENSING CLIENT ====="
-          unity-cli license-version
+          UNITY_HUB_PATH=/opt/unityhub/unityhub unity-cli hub-version || true
+
+      - name: Prepare Unity Licensing Client
+        env:
+          UNITY_HUB_PATH: /opt/unityhub/unityhub
+        shell: bash
+        run: |
+          set -e
+
+          find_client() {
+            find /usr /opt "$HOME" \
+              -type f \
+              -name "Unity.Licensing.Client" \
+              2>/dev/null \
+              | head -1
+          }
+
+          CLIENT="$(find_client || true)"
+
+          if [ -z "$CLIENT" ]; then
+            echo "Licensing client not found in Hub package."
+            echo "Installing a small Unity editor copy so the licensing client exists."
+
+            UNITY_HUB_PATH=/opt/unityhub/unityhub \
+            unity-cli setup-unity \
+              --unity-project none \
+              --unity-version 2018.2.0f2 \
+              --changeset 787658998520 \
+              --build-targets iOS \
+              --modules ios \
+              --json
+
+            CLIENT="$(find_client || true)"
+          fi
+
+          if [ -z "$CLIENT" ]; then
+            echo "ERROR: Unity.Licensing.Client not found."
+            exit 1
+          fi
+
+          CLIENT_DIR="$(dirname "$CLIENT")"
+
+          sudo rm -rf /opt/unityhub/UnityLicensingClient
+          sudo mkdir -p /opt/unityhub/UnityLicensingClient
+          sudo cp -a "$CLIENT_DIR"/. /opt/unityhub/UnityLicensingClient/
+          sudo chmod +x /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client || true
+
+          test -f /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
 
       - name: Activate Unity Personal
         shell: bash
@@ -565,7 +652,7 @@ jobs:
 
           echo "UNITY PERSONAL ACTIVATION: SUCCESS"
 
-      - name: Install exact Unity Editor + iOS module
+      - name: Install exact Unity Editor + iOS module DIRECTLY (no Hub)
         id: unity_setup
         shell: bash
         run: |
@@ -573,33 +660,65 @@ jobs:
 
           PROJECT="${{ steps.prepare.outputs.project }}"
           VERSION="${{ steps.prepare.outputs.unity_version }}"
+          CHANGESET="0bffbba03cb9"
+          UNITY_ROOT="$HOME/Unity/$VERSION"
 
           echo "PROJECT=$PROJECT"
           echo "UNITY_VERSION=$VERSION"
+          echo "CHANGESET=$CHANGESET"
+          echo "UNITY_ROOT=$UNITY_ROOT"
 
-          # v3 failed before Unity even started because GameCI tried to pull
-          # a Docker image that does not exist for this beta:
-          # unityci/editor:ubuntu-2021.2.0b11-ios-3
-          #
-          # v4 bypasses Docker/GameCI completely and asks Unity Hub to install
-          # the exact editor version recovered from the APK.
+          rm -rf "$UNITY_ROOT"
+          mkdir -p "$UNITY_ROOT" tools/unity-downloads
 
-          unity-cli setup-unity \
-            --unity-project "$PROJECT" \
-            --unity-version "$VERSION" \
-            --changeset 0bffbba03cb9 \
-            --channel b \
-            --build-targets iOS \
-            --modules ios \
-            --verbose \
-            --json \
-            | tee output/unity-setup.json
+          EDITOR_URL="https://download.unity3d.com/download_unity/$CHANGESET/LinuxEditorInstaller/Unity-$VERSION.tar.xz"
+          IOS_URL="https://download.unity3d.com/download_unity/$CHANGESET/LinuxEditorTargetInstaller/UnitySetup-iOS-Support-for-Editor-$VERSION.tar.xz"
 
-          echo "===== INSTALLED UNITY EDITORS ====="
-          unity-cli hub editors --installed \
-            | tee output/unity-editors.txt || true
+          echo "===== DOWNLOAD EXACT UNITY EDITOR ====="
+          curl -fL --retry 5 --retry-delay 5 \
+            "$EDITOR_URL" \
+            -o tools/unity-downloads/Unity.tar.xz
 
-      - name: Build Unity iOS Xcode project directly
+          echo "===== DOWNLOAD EXACT iOS BUILD SUPPORT ====="
+          curl -fL --retry 5 --retry-delay 5 \
+            "$IOS_URL" \
+            -o tools/unity-downloads/iOS-Support.tar.xz
+
+          echo "===== EXTRACT EDITOR ====="
+          tar -xJf tools/unity-downloads/Unity.tar.xz -C "$UNITY_ROOT"
+
+          echo "===== EXTRACT iOS SUPPORT ====="
+          tar -xJf tools/unity-downloads/iOS-Support.tar.xz -C "$UNITY_ROOT"
+
+          UNITY_BIN="$UNITY_ROOT/Editor/Unity"
+
+          if [ ! -x "$UNITY_BIN" ]; then
+            echo "Editor not found at expected path. Searching..."
+            UNITY_BIN="$(find "$UNITY_ROOT" -type f -path '*/Editor/Unity' -perm -111 | head -1 || true)"
+          fi
+
+          if [ -z "${UNITY_BIN:-}" ] || [ ! -x "$UNITY_BIN" ]; then
+            echo "ERROR: Unity executable not found after extraction."
+            find "$UNITY_ROOT" -maxdepth 4 -type f | head -400
+            exit 1
+          fi
+
+          echo "$UNITY_BIN" > output/unity-bin.txt
+          echo "UNITY_BIN=$UNITY_BIN"
+
+          echo "===== VERIFY iOS SUPPORT ====="
+          find "$UNITY_ROOT/Editor/Data/PlaybackEngines" -maxdepth 3 -type d -print 2>/dev/null \
+            | tee output/playback-engines.txt || true
+
+          if [ ! -d "$UNITY_ROOT/Editor/Data/PlaybackEngines/iOSSupport" ]; then
+            echo "ERROR: iOSSupport module was not installed into PlaybackEngines."
+            find "$UNITY_ROOT" -maxdepth 6 -iname '*ios*' -print | head -300
+            exit 1
+          fi
+
+          echo "DIRECT UNITY INSTALL: SUCCESS"
+
+      - name: Build Unity iOS Xcode project DIRECTLY
         id: unity_build
         continue-on-error: true
         shell: bash
@@ -607,16 +726,18 @@ jobs:
           set -o pipefail
 
           PROJECT="${{ steps.prepare.outputs.project }}"
+          UNITY_BIN="$(cat output/unity-bin.txt)"
 
           echo "===== DIRECT UNITY BUILD ====="
-          echo "No Docker. No GameCI editor image."
+          echo "No GameCI editor image. No Unity Hub editor install."
+          echo "UNITY_BIN=$UNITY_BIN"
+          echo "PROJECT=$PROJECT"
 
-          unity-cli run \
-            --unity-project "$PROJECT" \
-            --log-name "baldi-ios-build" \
+          xvfb-run -a "$UNITY_BIN" \
             -batchmode \
             -nographics \
             -quit \
+            -projectPath "$PROJECT" \
             -buildTarget iOS \
             -executeMethod BaldiIOSBuild.PerformBuild \
             -logFile - \
@@ -658,7 +779,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v8"
+            echo "BALDI PLUS iOS FAST v9 DIRECT-CDN"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -686,7 +807,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v8
+          name: Baldis-Plus-iOS-Diagnostics-v6
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -707,7 +828,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v8
+          name: Baldis-Plus-iOS-Xcode-STAGED-v6
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -718,7 +839,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v8 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v6 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -731,7 +852,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v8
+          name: Baldis-Plus-iOS-Xcode-STAGED-v6
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -825,17 +946,17 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v8-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v6-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v8-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v6-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v8-Signulous
+          name: Baldis-Plus-iOS-v6-Signulous
           path: |
-            output/Baldis-Plus-iOS-v8-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v6-UNSIGNED.ipa
             output/xcodebuild.log
           if-no-files-found: error
           retention-days: 7
