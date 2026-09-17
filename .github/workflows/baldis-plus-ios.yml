@@ -449,6 +449,7 @@ jobs:
                   };
 
                   BuildReport report = BuildPipeline.BuildPlayer(options);
+
                   Debug.Log("BALDI IOS RESULT: " + report.summary.result);
                   Debug.Log("BALDI IOS ERRORS: " + report.summary.totalErrors);
                   Debug.Log("BALDI IOS WARNINGS: " + report.summary.totalWarnings);
@@ -633,97 +634,23 @@ jobs:
 
           test -f /opt/unityhub/UnityLicensingClient/Unity.Licensing.Client
 
-      - name: Activate Unity Personal automatically
-        env:
-          UNITY_HUB_PATH: /opt/unityhub/unityhub
+      - name: Activate Unity Personal
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          GLOBAL_NODE_MODULES="$(npm root -g)"
-          LICENSE_MODULE="$GLOBAL_NODE_MODULES/@rage-against-the-pixel/unity-cli/dist/license-client.js"
+          echo "===== ACTIVATE UNITY PERSONAL ====="
 
-          if [ ! -f "$LICENSE_MODULE" ]; then
-            echo "ERROR: unity-cli licensing module not found"
-            exit 1
-          fi
+          unity-cli activate-license \
+            --license personal \
+            --email "$UNITY_EMAIL" \
+            --password "$UNITY_PASSWORD" \
+            --json
 
-          export LICENSE_MODULE
-
-          node <<'NODE'
-          const {
-            LicensingClient,
-            LicenseType
-          } = require(process.env.LICENSE_MODULE);
-
-          async function main() {
-            const client = new LicensingClient('6.x');
-
-            await client.Activate(
-              {
-                licenseType: LicenseType.personal,
-                username: process.env.UNITY_EMAIL,
-                password: process.env.UNITY_PASSWORD
-              },
-              true
-            );
-
-            console.log("UNITY PERSONAL ACTIVATION: SUCCESS");
-          }
-
-          main().catch((error) => {
-            console.error("UNITY PERSONAL ACTIVATION FAILED:");
-            console.error(error && error.message ? error.message : error);
-            process.exit(1);
-          });
-          NODE
-
+          echo "===== LICENSE CONTEXT ====="
           unity-cli license-context || true
 
-      - name: Export activated Unity license for GameCI
-        id: export_license
-        shell: bash
-        run: |
-          set -e
-
-          LICENSE_FILE=""
-
-          for CANDIDATE in \
-            "$HOME/.local/share/unity3d/Unity/Unity_lic.ulf" \
-            "$HOME/.config/unity3d/Unity/Unity_lic.ulf" \
-            "/root/.local/share/unity3d/Unity/Unity_lic.ulf" \
-            "/root/.config/unity3d/Unity/Unity_lic.ulf"
-          do
-            if [ -s "$CANDIDATE" ]; then
-              LICENSE_FILE="$CANDIDATE"
-              break
-            fi
-          done
-
-          if [ -z "$LICENSE_FILE" ]; then
-            LICENSE_FILE="$(
-              find "$HOME" /root /usr/share/unity3d /var/lib/unity3d \
-                -type f \( -name "Unity_lic.ulf" -o -name "*.ulf" \) \
-                2>/dev/null \
-                | head -1
-            )"
-          fi
-
-          if [ -z "$LICENSE_FILE" ] || [ ! -s "$LICENSE_FILE" ]; then
-            echo "ERROR: activation succeeded but Unity_lic.ulf was not found"
-            exit 1
-          fi
-
-          echo "LICENSE_FILE=$LICENSE_FILE"
-
-          {
-            echo "UNITY_LICENSE<<UNITY_LICENSE_EOF"
-            cat "$LICENSE_FILE"
-            echo
-            echo "UNITY_LICENSE_EOF"
-          } >> "$GITHUB_ENV"
-
-          echo "UNITY_LICENSE exported for GameCI."
+          echo "UNITY PERSONAL ACTIVATION: SUCCESS"
 
       - name: Install exact Unity Editor + iOS module
         id: unity_setup
