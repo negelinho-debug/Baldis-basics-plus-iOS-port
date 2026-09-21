@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - FAST v10 OFFICIAL-UNITY-CLI
+name: Baldi's Basics Plus iOS - v12 0.14.3 RUNTIME LOGS
 
 on:
   workflow_dispatch:
@@ -85,7 +85,24 @@ jobs:
           set -euo pipefail
 
           mkdir -p work/android
-          unzip -q work/BaldisPlus.apk -d work/android
+          unzip -oq work/BaldisPlus.apk -d work/android
+
+          # Exact launcher artwork in the Rondol67 0.14.3 APK.
+          # Keep a fallback so the workflow still gives useful diagnostics
+          # if the resource name changes later.
+          ICON=""
+          if [ -f work/android/res/as.png ]; then
+            ICON="work/android/res/as.png"
+          elif [ -f work/android/res/Gx.png ]; then
+            ICON="work/android/res/Gx.png"
+          fi
+
+          if [ -n "$ICON" ]; then
+            cp "$ICON" output/Baldi-AppIcon.png
+            echo "ICON=$ICON" | tee output/icon.txt
+          else
+            echo "ICON=NOT_FOUND" | tee output/icon.txt
+          fi
 
           echo "===== APK ABI ====="
           find work/android/lib -maxdepth 2 -type f -name '*.so' -print 2>/dev/null \
@@ -137,7 +154,8 @@ jobs:
             CANDIDATE="$(
               strings "$f" 2>/dev/null \
                 | grep -Eo '20[0-9]{2}\.[0-9]+\.[0-9]+[abfp][0-9]+' \
-                | head -1 || true
+                | sort -V \
+                | tail -1 || true
             )"
             if [ -n "$CANDIDATE" ]; then
               VERSION="$CANDIDATE"
@@ -154,7 +172,8 @@ jobs:
               CANDIDATE="$(
                 strings "$f" 2>/dev/null \
                   | grep -Eo '20[0-9]{2}\.[0-9]+\.[0-9]+[abfp][0-9]+' \
-                  | head -1 || true
+                  | sort -V \
+                  | tail -1 || true
               )"
               if [ -n "$CANDIDATE" ]; then
                 VERSION="$CANDIDATE"
@@ -382,7 +401,250 @@ jobs:
           echo "===== PROJECT VERSION ====="
           cat "$VERSION_FILE"
 
+          # ------------------------------------------------------------
+          # v12: Runtime logs visible in iOS Files
+          #
+          # On the phone:
+          # Files -> On My iPhone -> Baldi's Basics Plus -> Logs
+          #
+          # runtime.log     = Unity/C# logs and exceptions
+          # native-crash.txt = SIGABRT/SIGSEGV/SIGBUS/SIGILL/SIGFPE
+          # ------------------------------------------------------------
+          mkdir -p "$PROJECT/Assets/BaldiIOSRuntime"
+          mkdir -p "$PROJECT/Assets/Plugins/iOS"
           mkdir -p "$PROJECT/Assets/Editor"
+
+          cat > "$PROJECT/Assets/BaldiIOSRuntime/BaldiRuntimeLogger.cs" <<'CS'
+          using System;
+          using System.IO;
+          using System.Text;
+          using UnityEngine;
+
+          public sealed class BaldiRuntimeLogger : MonoBehaviour
+          {
+              private static readonly object Gate = new object();
+              private static string logDirectory;
+              private static string logFile;
+              private static bool initialized;
+
+              [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+              private static void Boot()
+              {
+                  if (initialized)
+                      return;
+
+                  initialized = true;
+
+                  try
+                  {
+                      logDirectory = Path.Combine(Application.persistentDataPath, "Logs");
+                      Directory.CreateDirectory(logDirectory);
+
+                      logFile = Path.Combine(logDirectory, "runtime.log");
+                      string previous = Path.Combine(logDirectory, "runtime-previous.log");
+
+                      try
+                      {
+                          if (File.Exists(logFile) && new FileInfo(logFile).Length > 4 * 1024 * 1024)
+                          {
+                              if (File.Exists(previous))
+                                  File.Delete(previous);
+                              File.Move(logFile, previous);
+                          }
+                      }
+                      catch { }
+
+                      File.WriteAllText(
+                          Path.Combine(logDirectory, "README.txt"),
+                          "Baldi's Basics Plus iOS runtime logs.\n" +
+                          "Send runtime.log and native-crash.txt if the game closes or gets stuck.\n"
+                      );
+
+                      Append(
+                          "\n==============================\n" +
+                          "BALDI iOS LAUNCH " + DateTime.UtcNow.ToString("O") + "\n" +
+                          "unity=" + Application.unityVersion + "\n" +
+                          "version=" + Application.version + "\n" +
+                          "platform=" + Application.platform + "\n" +
+                          "device=" + SystemInfo.deviceModel + "\n" +
+                          "os=" + SystemInfo.operatingSystem + "\n" +
+                          "persistentDataPath=" + Application.persistentDataPath + "\n" +
+                          "==============================\n"
+                      );
+
+                      Application.logMessageReceivedThreaded += OnUnityLog;
+                      AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+
+                      GameObject go = new GameObject("_BaldiRuntimeLogger");
+                      DontDestroyOnLoad(go);
+                      go.hideFlags = HideFlags.HideAndDontSave;
+                      go.AddComponent<BaldiRuntimeLogger>();
+                  }
+                  catch
+                  {
+                      // Never let the logger itself stop the game.
+                  }
+              }
+
+              private static void OnUnityLog(string condition, string stackTrace, LogType type)
+              {
+                  StringBuilder sb = new StringBuilder();
+                  sb.Append(DateTime.UtcNow.ToString("O"));
+                  sb.Append(" [");
+                  sb.Append(type);
+                  sb.Append("] ");
+                  sb.Append(condition ?? "");
+
+                  if (!string.IsNullOrEmpty(stackTrace))
+                  {
+                      sb.Append("\n");
+                      sb.Append(stackTrace);
+                  }
+
+                  sb.Append("\n");
+                  Append(sb.ToString());
+              }
+
+              private static void OnUnhandledException(object sender, UnhandledExceptionEventArgs e)
+              {
+                  try
+                  {
+                      Append(
+                          DateTime.UtcNow.ToString("O") +
+                          " [UNHANDLED] terminating=" + e.IsTerminating + "\n" +
+                          (e.ExceptionObject == null ? "<null>" : e.ExceptionObject.ToString()) +
+                          "\n"
+                      );
+                  }
+                  catch { }
+              }
+
+              private static void Append(string text)
+              {
+                  if (string.IsNullOrEmpty(logFile))
+                      return;
+
+                  try
+                  {
+                      lock (Gate)
+                          File.AppendAllText(logFile, text);
+                  }
+                  catch { }
+              }
+
+              private void OnApplicationPause(bool paused)
+              {
+                  Append(
+                      DateTime.UtcNow.ToString("O") +
+                      (paused ? " [APP] paused\n" : " [APP] resumed\n")
+                  );
+              }
+
+              private void OnApplicationFocus(bool focused)
+              {
+                  Append(
+                      DateTime.UtcNow.ToString("O") +
+                      (focused ? " [APP] focus=true\n" : " [APP] focus=false\n")
+                  );
+              }
+
+              private void OnApplicationQuit()
+              {
+                  Append(DateTime.UtcNow.ToString("O") + " [APP] quit\n");
+              }
+          }
+          CS
+
+          cat > "$PROJECT/Assets/Plugins/iOS/BaldiNativeCrashLogger.mm" <<'MM'
+          #import <Foundation/Foundation.h>
+          #include <fcntl.h>
+          #include <limits.h>
+          #include <signal.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include <unistd.h>
+
+          static char gBaldiNativeCrashPath[PATH_MAX];
+
+          static void BaldiWriteCrashSignal(int sig)
+          {
+              int fd = open(
+                  gBaldiNativeCrashPath,
+                  O_WRONLY | O_CREAT | O_APPEND,
+                  0644
+              );
+
+              if (fd >= 0)
+              {
+                  char buffer[96];
+                  int length = snprintf(
+                      buffer,
+                      sizeof(buffer),
+                      "signal=%d\n",
+                      sig
+                  );
+
+                  if (length > 0)
+                      write(fd, buffer, (size_t)length);
+
+                  close(fd);
+              }
+
+              signal(sig, SIG_DFL);
+              raise(sig);
+          }
+
+          __attribute__((constructor))
+          static void BaldiInstallNativeCrashLogger(void)
+          {
+              @autoreleasepool
+              {
+                  NSArray<NSString *> *paths =
+                      NSSearchPathForDirectoriesInDomains(
+                          NSDocumentDirectory,
+                          NSUserDomainMask,
+                          YES
+                      );
+
+                  NSString *documents = paths.firstObject;
+                  if (documents == nil)
+                      return;
+
+                  NSString *logs =
+                      [documents stringByAppendingPathComponent:@"Logs"];
+
+                  [[NSFileManager defaultManager]
+                      createDirectoryAtPath:logs
+                      withIntermediateDirectories:YES
+                      attributes:nil
+                      error:nil];
+
+                  NSString *crash =
+                      [logs stringByAppendingPathComponent:@"native-crash.txt"];
+
+                  strncpy(
+                      gBaldiNativeCrashPath,
+                      crash.fileSystemRepresentation,
+                      sizeof(gBaldiNativeCrashPath) - 1
+                  );
+
+                  gBaldiNativeCrashPath[
+                      sizeof(gBaldiNativeCrashPath) - 1
+                  ] = '\0';
+
+                  signal(SIGABRT, BaldiWriteCrashSignal);
+                  signal(SIGSEGV, BaldiWriteCrashSignal);
+                  signal(SIGBUS,  BaldiWriteCrashSignal);
+                  signal(SIGILL,  BaldiWriteCrashSignal);
+                  signal(SIGFPE,  BaldiWriteCrashSignal);
+              }
+          }
+          MM
+
+          # Keep the real APK icon in the recovered Unity project.
+          if [ -f output/Baldi-AppIcon.png ]; then
+            cp output/Baldi-AppIcon.png "$PROJECT/Assets/BaldiAppIcon.png"
+          fi
 
           cat > "$PROJECT/Assets/Editor/BaldiIOSBuild.cs" <<'CS'
           using System;
@@ -394,8 +656,48 @@ jobs:
 
           public static class BaldiIOSBuild
           {
+              private static void ConfigureIcon()
+              {
+                  const string iconPath = "Assets/BaldiAppIcon.png";
+
+                  if (!File.Exists(iconPath))
+                  {
+                      Debug.LogWarning("BALDI IOS: Android launcher icon was not recovered.");
+                      return;
+                  }
+
+                  AssetDatabase.ImportAsset(iconPath, ImportAssetOptions.ForceUpdate);
+                  Texture2D icon = AssetDatabase.LoadAssetAtPath<Texture2D>(iconPath);
+
+                  if (icon == null)
+                  {
+                      Debug.LogWarning("BALDI IOS: icon import failed.");
+                      return;
+                  }
+
+                  int[] sizes = PlayerSettings.GetIconSizesForTargetGroup(BuildTargetGroup.iOS);
+
+                  if (sizes == null || sizes.Length == 0)
+                  {
+                      PlayerSettings.SetIconsForTargetGroup(
+                          BuildTargetGroup.iOS,
+                          new[] { icon }
+                      );
+                  }
+                  else
+                  {
+                      Texture2D[] icons = Enumerable.Repeat(icon, sizes.Length).ToArray();
+                      PlayerSettings.SetIconsForTargetGroup(
+                          BuildTargetGroup.iOS,
+                          icons
+                      );
+                  }
+              }
+
               public static void PerformBuild()
               {
+                  ConfigureIcon();
+
                   string[] scenes = EditorBuildSettings.scenes
                       .Where(s => s != null && s.enabled && !string.IsNullOrWhiteSpace(s.path))
                       .Select(s => s.path)
@@ -430,22 +732,29 @@ jobs:
 
                   Directory.CreateDirectory(output);
 
+                  PlayerSettings.productName = "Baldi's Basics Plus";
+                  PlayerSettings.companyName = "BaldiPlusIOSPort";
+                  PlayerSettings.bundleVersion = "0.14.3";
+
+                  PlayerSettings.SetApplicationIdentifier(
+                      BuildTargetGroup.iOS,
+                      "com.baldisplus.ios.port"
+                  );
+
                   PlayerSettings.SetScriptingBackend(
                       BuildTargetGroup.iOS,
                       ScriptingImplementation.IL2CPP
                   );
 
-                  PlayerSettings.applicationIdentifier =
-                      "com.baldisplus.ios.port";
-
                   PlayerSettings.iOS.targetOSVersionString = "15.0";
+                  PlayerSettings.stripEngineCode = false;
 
                   BuildPlayerOptions options = new BuildPlayerOptions
                   {
                       scenes = scenes,
                       locationPathName = output,
                       target = BuildTarget.iOS,
-                      options = BuildOptions.None
+                      options = BuildOptions.CleanBuildCache
                   };
 
                   BuildReport report = BuildPipeline.BuildPlayer(options);
@@ -694,7 +1003,16 @@ jobs:
 
           PROJECT="${{ steps.prepare.outputs.project }}"
           VERSION="${{ steps.prepare.outputs.unity_version }}"
-          CHANGESET="0bffbba03cb9"
+          case "$VERSION" in
+            2021.3.58f1)
+              CHANGESET="2c36cafeeccf"
+              ;;
+            *)
+              echo "ERROR: v12 is intentionally locked to Baldi 0.14.3 / Unity 2021.3.58f1."
+              echo "Detected Unity version: $VERSION"
+              exit 1
+              ;;
+          esac
           UNITY="$PWD/tools/unity-official-cli/bin/unity"
           INSTALL_ROOT="$HOME/UnityEditors"
 
@@ -818,6 +1136,31 @@ jobs:
 
           echo "OFFICIAL UNITY CLI INSTALL: SUCCESS"
 
+      - name: Verify Bee backend for Unity 2021.3 LTS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UNITY_BIN="$(cat output/unity-bin.txt)"
+          EDITOR_DIR="$(dirname "$UNITY_BIN")"
+          BEE="$EDITOR_DIR/Data/bee_backend"
+
+          echo "===== BEE CHECK ====="
+          echo "UNITY_BIN=$UNITY_BIN"
+          echo "BEE=$BEE"
+
+          if [ ! -x "$BEE" ]; then
+            echo "ERROR: bee_backend not found: $BEE"
+            find "$EDITOR_DIR/Data" -maxdepth 2 -name 'bee_backend*' -print || true
+            exit 1
+          fi
+
+          # The old 2021.2.0b11 port needed a --stdin-canary wrapper.
+          # This APK is 2021.3.58f1 LTS, so leave Bee untouched first.
+          PROJECT="${{ steps.prepare.outputs.project }}"
+          rm -rf "$PROJECT/Library/Bee"
+          echo "BEE CHECK: OK (no beta workaround applied)"
+
       - name: Build Unity iOS Xcode project
         id: unity_build
         continue-on-error: true
@@ -878,7 +1221,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS FAST v10 OFFICIAL-UNITY-CLI"
+            echo "BALDI PLUS iOS v12 0.14.3 RUNTIME LOGS"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -902,11 +1245,17 @@ jobs:
               > output/recovered-scenes.txt 2>/dev/null || true
           fi
 
+          {
+            echo "If the IPA installs and then closes:"
+            echo "Files -> On My iPhone -> Baldi's Basics Plus -> Logs"
+            echo "Send runtime.log and native-crash.txt."
+          } > output/runtime-log-instructions.txt
+
       - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v10
+          name: Baldis-Plus-iOS-Diagnostics-v12
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -927,7 +1276,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v10
+          name: Baldis-Plus-iOS-Xcode-STAGED-v12
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -938,7 +1287,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v10 and send it to ChatGPT."
+          echo "Download Baldis-Plus-iOS-Diagnostics-v12 and send it to ChatGPT."
           exit 1
 
   package_ipa:
@@ -951,7 +1300,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v10
+          name: Baldis-Plus-iOS-Xcode-STAGED-v12
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -1040,23 +1389,47 @@ jobs:
 
           echo "APP=$APP"
 
+          PLIST="$APP/Info.plist"
+          if [ ! -f "$PLIST" ]; then
+            echo "ERROR: built app Info.plist not found."
+            exit 1
+          fi
+
+          # Expose Documents in Files -> On My iPhone -> Baldi's Basics Plus.
+          /usr/libexec/PlistBuddy -c "Set :UIFileSharingEnabled true" "$PLIST" 2>/dev/null ||             /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$PLIST"
+
+          /usr/libexec/PlistBuddy -c "Set :LSSupportsOpeningDocumentsInPlace true" "$PLIST" 2>/dev/null ||             /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$PLIST"
+
+          /usr/libexec/PlistBuddy -c "Print :UIFileSharingEnabled" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :LSSupportsOpeningDocumentsInPlace" "$PLIST"
+
           rm -rf output/Payload
           mkdir -p output/Payload
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v10-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v12-LOGS-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v10-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v12-LOGS-UNSIGNED.ipa
+
+          cat > runtime-log-instructions.txt <<'TXT'
+          After installation and first launch:
+          Files -> On My iPhone -> Baldi's Basics Plus -> Logs
+
+          Send these files if the app closes or gets stuck:
+          - runtime.log
+          - native-crash.txt (if present)
+          TXT
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v10-Signulous
+          name: Baldis-Plus-iOS-v12-LOGS-Signulous
           path: |
-            output/Baldis-Plus-iOS-v10-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v12-LOGS-UNSIGNED.ipa
             output/xcodebuild.log
+            runtime-log-instructions.txt
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
