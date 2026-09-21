@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - v13 UNITY 2021.3.53f1
+name: Baldi's Basics Plus iOS - v15 PRE-XLTS UNITY FIX
 
 on:
   workflow_dispatch:
@@ -386,26 +386,32 @@ jobs:
 
           VERSION_FILE="$PROJECT/ProjectSettings/ProjectVersion.txt"
 
-          # Diagnostics from v12 proved the APK itself is Unity 2021.3.53f1.
-          # AssetRipper exported ProjectVersion.txt as 2021.3.58f1, but that
-          # editor is Extended LTS and Unity Personal refuses to launch it.
+          # The APK was built with Unity 2021.3.53f1, but diagnostics proved
+          # that build now requires the Extended-LTS entitlement and refuses
+          # Unity Personal in CI.
           #
-          # Force the project back to the APK's real Unity editor version.
+          # Use the closest Unity 2021.3 build released before Unity 6/xLTS:
+          # Unity 2021.3.45f1 (0da89fac8e79).
           APK_UNITY_VERSION="${{ steps.inspect.outputs.unity_version }}"
 
           if [ "$APK_UNITY_VERSION" != "2021.3.53f1" ]; then
-            echo "ERROR: v13 expects the Rondol67 Baldi 0.14.3 APK built with Unity 2021.3.53f1."
+            echo "ERROR: v15 expects the Rondol67 Baldi 0.14.3 APK built with Unity 2021.3.53f1."
             echo "Detected APK Unity version: $APK_UNITY_VERSION"
             exit 1
           fi
 
+          BUILD_UNITY_VERSION="2021.3.45f1"
+          BUILD_UNITY_CHANGESET="0da89fac8e79"
+
           mkdir -p "$PROJECT/ProjectSettings"
-          cat > "$VERSION_FILE" <<'EOF'
-          m_EditorVersion: 2021.3.53f1
-          m_EditorVersionWithRevision: 2021.3.53f1 (5c710799360e)
+          cat > "$VERSION_FILE" <<EOF
+          m_EditorVersion: $BUILD_UNITY_VERSION
+          m_EditorVersionWithRevision: $BUILD_UNITY_VERSION ($BUILD_UNITY_CHANGESET)
           EOF
 
-          echo "===== PROJECT VERSION (FORCED TO APK VERSION) ====="
+          echo "===== APK UNITY VERSION ====="
+          echo "$APK_UNITY_VERSION"
+          echo "===== BUILD UNITY VERSION (PRE-XLTS) ====="
           cat "$VERSION_FILE"
 
           # ------------------------------------------------------------
@@ -1011,12 +1017,12 @@ jobs:
           PROJECT="${{ steps.prepare.outputs.project }}"
           VERSION="${{ steps.prepare.outputs.unity_version }}"
           case "$VERSION" in
-            2021.3.53f1)
-              CHANGESET="5c710799360e"
+            2021.3.45f1)
+              CHANGESET="0da89fac8e79"
               ;;
             *)
-              echo "ERROR: v13 is intentionally locked to Baldi 0.14.3 / Unity 2021.3.53f1."
-              echo "Detected Unity version: $VERSION"
+              echo "ERROR: v15 expects recovered ProjectVersion.txt to be Unity 2021.3.45f1."
+              echo "Detected build Unity version: $VERSION"
               exit 1
               ;;
           esac
@@ -1032,7 +1038,7 @@ jobs:
           echo "UNITY_VERSION=$VERSION"
           echo "CHANGESET=$CHANGESET"
           echo "INSTALL_ROOT=$INSTALL_ROOT"
-          echo "V13_FIX=Use APK's real Unity 2021.3.53f1 instead of AssetRipper 2021.3.58f1 Extended LTS"
+          echo "V15_FIX=Use Unity 2021.3.45f1 pre-xLTS so Unity Personal can actually run the recovered project"
 
           mkdir -p "$INSTALL_ROOT"
 
@@ -1164,7 +1170,7 @@ jobs:
           fi
 
           # The old 2021.2.0b11 port needed a --stdin-canary wrapper.
-          # This APK is 2021.3.53f1 LTS, so leave Bee untouched first.
+          # Build editor is Unity 2021.3.45f1 regular LTS, so leave Bee untouched first.
           PROJECT="${{ steps.prepare.outputs.project }}"
           rm -rf "$PROJECT/Library/Bee"
           echo "BEE CHECK: OK (no beta workaround applied)"
@@ -1187,6 +1193,7 @@ jobs:
             -batchmode \
             -nographics \
             -quit \
+            -accept-apiupdate \
             -projectPath "$PROJECT" \
             -buildTarget iOS \
             -executeMethod BaldiIOSBuild.PerformBuild \
@@ -1229,7 +1236,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS v13 UNITY 2021.3.53f1"
+            echo "BALDI PLUS iOS v15 PRE-XLTS UNITY FIX"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -1263,7 +1270,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v13
+          name: Baldis-Plus-iOS-Diagnostics-v15
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -1284,7 +1291,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v13
+          name: Baldis-Plus-iOS-Xcode-STAGED-v15
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -1295,7 +1302,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "Download Baldis-Plus-iOS-Diagnostics-v13 and send it to ChatGPT."
+          echo "v15 did not reach Xcode export. Diagnostics contain the real compiler error."
           exit 1
 
   package_ipa:
@@ -1308,7 +1315,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v13
+          name: Baldis-Plus-iOS-Xcode-STAGED-v15
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -1416,10 +1423,10 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v13-LOGS-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v15-LOGS-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v13-LOGS-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v15-LOGS-UNSIGNED.ipa
 
           cat > runtime-log-instructions.txt <<'TXT'
           After installation and first launch:
@@ -1433,9 +1440,9 @@ jobs:
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v13-LOGS-Signulous
+          name: Baldis-Plus-iOS-v15-LOGS-Signulous
           path: |
-            output/Baldis-Plus-iOS-v13-LOGS-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v15-LOGS-UNSIGNED.ipa
             output/xcodebuild.log
             runtime-log-instructions.txt
           if-no-files-found: error
