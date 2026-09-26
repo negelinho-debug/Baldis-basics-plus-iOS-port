@@ -1,4 +1,4 @@
-name: Baldi's Basics Plus iOS - v15 PRE-XLTS UNITY FIX
+name: Baldi's Basics Plus iOS - v17 CLEAN CONTINUE + WATCHDOG
 
 on:
   workflow_dispatch:
@@ -1175,34 +1175,74 @@ jobs:
           rm -rf "$PROJECT/Library/Bee"
           echo "BEE CHECK: OK (no beta workaround applied)"
 
-      - name: Build Unity iOS Xcode project
+      - name: Build Unity iOS Xcode project with watchdog
         id: unity_build
         continue-on-error: true
         shell: bash
         run: |
+          set +e
           set -o pipefail
 
           PROJECT="${{ steps.prepare.outputs.project }}"
           UNITY_BIN="$(cat output/unity-bin.txt)"
 
-          echo "===== UNITY IOS BUILD ====="
-          echo "UNITY_BIN=$UNITY_BIN"
-          echo "PROJECT=$PROJECT"
+          mkdir -p output
 
-          xvfb-run -a "$UNITY_BIN" \
-            -batchmode \
-            -nographics \
-            -quit \
-            -accept-apiupdate \
-            -projectPath "$PROJECT" \
-            -buildTarget iOS \
-            -executeMethod BaldiIOSBuild.PerformBuild \
-            -logFile - \
-            2>&1 | tee output/unity-build.log
+          echo "===== UNITY BUILD WITH WATCHDOG =====" | tee output/unity-build.log
+          echo "PROJECT=$PROJECT" | tee -a output/unity-build.log
+          echo "UNITY_BIN=$UNITY_BIN" | tee -a output/unity-build.log
+          echo "WATCHDOG=30 minutes" | tee -a output/unity-build.log
 
-          RC=${PIPESTATUS[0]}
-          echo "UNITY_EXIT=$RC" | tee output/unity-exit.txt
-          exit "$RC"
+          (
+            while true; do
+              date -u +"HEARTBEAT %Y-%m-%dT%H:%M:%SZ" >> output/heartbeat.log
+              sleep 60
+            done
+          ) &
+          HEARTBEAT_PID=$!
+
+          timeout \
+            --signal=TERM \
+            --kill-after=60s \
+            30m \
+            xvfb-run -a "$UNITY_BIN" \
+              -batchmode \
+              -nographics \
+              -quit \
+              -accept-apiupdate \
+              -projectPath "$PROJECT" \
+              -buildTarget iOS \
+              -executeMethod BaldiIOSBuild.PerformBuild \
+              -logFile - \
+              2>&1 | tee -a output/unity-build.log
+
+          UNITY_RC=${PIPESTATUS[0]}
+
+          kill "$HEARTBEAT_PID" 2>/dev/null || true
+          wait "$HEARTBEAT_PID" 2>/dev/null || true
+
+          echo "UNITY_EXIT=$UNITY_RC" | tee output/unity-exit.txt
+
+          if [ "$UNITY_RC" -eq 124 ] || [ "$UNITY_RC" -eq 137 ] || [ "$UNITY_RC" -eq 143 ]; then
+            echo "UNITY_WATCHDOG_TIMEOUT=YES" | tee output/unity-watchdog.txt
+          else
+            echo "UNITY_WATCHDOG_TIMEOUT=NO" | tee output/unity-watchdog.txt
+          fi
+
+          {
+            echo "===== LAST 300 UNITY BUILD LINES ====="
+            tail -300 output/unity-build.log 2>/dev/null || true
+            echo
+            echo "===== PROJECT LIBRARY/BEE SNAPSHOT ====="
+            find "$PROJECT/Library/Bee" -maxdepth 4 -type f \
+              -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' \
+              2>/dev/null \
+              | sort \
+              | tail -300 || true
+          } > output/unity-build-snapshot.txt
+
+          # Always return control so diagnostics can upload.
+          exit 0
 
       - name: Locate Unity iOS Xcode output
         id: xcode
@@ -1236,7 +1276,7 @@ jobs:
           set +e
 
           {
-            echo "BALDI PLUS iOS v15 PRE-XLTS UNITY FIX"
+            echo "BALDI PLUS iOS v17 CLEAN CONTINUE + WATCHDOG"
             echo "======================"
             echo
             cat output/inspect.txt 2>/dev/null
@@ -1249,6 +1289,31 @@ jobs:
 
           tail -400 output/assetripper.log \
             > output/assetripper-tail.txt 2>/dev/null || true
+
+          PROJECT="$(cat output/project-path.txt 2>/dev/null || true)"
+
+          if [ -n "$PROJECT" ] && [ -d "$PROJECT" ]; then
+            {
+              echo "===== RECENT PROJECT FILES ====="
+              find "$PROJECT" -type f -mmin -40 \
+                -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' \
+                2>/dev/null \
+                | sort \
+                | tail -500
+            } > output/recent-project-files.txt || true
+
+            {
+              echo "===== BEE FILES ====="
+              find "$PROJECT/Library/Bee" -maxdepth 6 -type f \
+                -printf '%TY-%Tm-%Td %TH:%TM:%TS %s %p\n' \
+                2>/dev/null \
+                | sort \
+                | tail -500
+            } > output/bee-files.txt || true
+
+            cp "$PROJECT/Library/EditorInstance.json" \
+              output/EditorInstance.json 2>/dev/null || true
+          fi
 
           echo "===== UNITY CLI EDITOR LOGS =====" > output/unity-editor-logs.txt
           unity-cli editor-logs >> output/unity-editor-logs.txt 2>&1 || true
@@ -1270,7 +1335,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Diagnostics-v15
+          name: Baldis-Plus-iOS-Diagnostics-v17
           path: output
           if-no-files-found: ignore
           retention-days: 7
@@ -1291,7 +1356,7 @@ jobs:
         if: steps.xcode.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v15
+          name: Baldis-Plus-iOS-Xcode-STAGED-v17
           path: xcode-stage
           if-no-files-found: error
           retention-days: 1
@@ -1302,7 +1367,7 @@ jobs:
         shell: bash
         run: |
           echo "Unity did not export an iOS Xcode project."
-          echo "v15 did not reach Xcode export. Diagnostics contain the real compiler error."
+          echo "v17 did not reach Xcode export. Diagnostics should still be available because the watchdog returned control."
           exit 1
 
   package_ipa:
@@ -1315,7 +1380,7 @@ jobs:
       - name: Download Xcode project
         uses: actions/download-artifact@v4
         with:
-          name: Baldis-Plus-iOS-Xcode-STAGED-v15
+          name: Baldis-Plus-iOS-Xcode-STAGED-v17
           path: unity-ios
 
       - name: Inspect Xcode project
@@ -1423,10 +1488,10 @@ jobs:
           cp -R "$APP" output/Payload/BaldisPlus.app
 
           cd output
-          /usr/bin/zip -qry Baldis-Plus-iOS-v15-LOGS-UNSIGNED.ipa Payload
+          /usr/bin/zip -qry Baldis-Plus-iOS-v17-CLEAN-LOGS-UNSIGNED.ipa Payload
           rm -rf Payload
 
-          ls -lh Baldis-Plus-iOS-v15-LOGS-UNSIGNED.ipa
+          ls -lh Baldis-Plus-iOS-v17-CLEAN-LOGS-UNSIGNED.ipa
 
           cat > runtime-log-instructions.txt <<'TXT'
           After installation and first launch:
@@ -1440,9 +1505,9 @@ jobs:
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Baldis-Plus-iOS-v15-LOGS-Signulous
+          name: Baldis-Plus-iOS-v17-CLEAN-LOGS-Signulous
           path: |
-            output/Baldis-Plus-iOS-v15-LOGS-UNSIGNED.ipa
+            output/Baldis-Plus-iOS-v17-CLEAN-LOGS-UNSIGNED.ipa
             output/xcodebuild.log
             runtime-log-instructions.txt
           if-no-files-found: error
